@@ -38,6 +38,8 @@ GOOGLE_GENERATIVE_AI_API_KEY=...
 
 Puedes obtener una API key de Gemini en Google AI Studio: <https://aistudio.google.com>.
 
+El nivel gratuito limita las peticiones por día y por minuto de cada modelo (consulta tu panel de límites en AI Studio). Un turno que lee páginas consume 3 o 4 peticiones, así que para probar con calma conviene un modelo con más margen, por ejemplo `GEMINI_MODEL=gemini-3.5-flash-lite`, o activar facturación en la clave. Cuando se agota la cuota diaria, el tutor lo dice en el chat y el log del servidor registra el motivo.
+
 Si vas a usar PDFs, instala Poppler:
 
 ```bash

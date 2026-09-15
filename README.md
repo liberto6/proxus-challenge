@@ -42,7 +42,7 @@ Requisitos:
 - Node.js 20+.
 - pnpm instalado.
 - Poppler instalado (`pdfinfo` y `pdftoppm`) si quieres usar PDFs.
-- Una API key de Google Gemini para probar el agente AI.
+- Una API key de Google Gemini para probar el agente AI. Con el nivel gratuito, cada modelo tiene un límite diario y por minuto de peticiones (en el momento de escribir esto, 20 al día y 5 por minuto en los modelos Flash); un turno que lee páginas de un PDF consume 3 o 4 peticiones. El modelo se elige con `GEMINI_MODEL` en `.env` (por defecto `gemini-3.5-flash`). Si el proveedor rechaza una petición, la interfaz lo indica y el log del servidor lo traza.
 
 Instala dependencias:
 

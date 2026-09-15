@@ -14,7 +14,7 @@ const LoadSkill = Tool.make("load_skill", {
 });
 
 const Cli = Tool.make("cli", {
-  description: "Run a CLI command. Use --help on commands to inspect usage, subcommands, and examples.",
+  description: "Run one of the tutor's own commands (`materials ...`, `artifacts ...`). This is not a shell: no system commands exist. Use `<command> --help` to inspect usage, subcommands, and examples. Call it only when the request needs data or actions on the user's materials or artifacts.",
   parameters: Schema.Struct({
     input: Schema.String
   }),
@@ -53,7 +53,7 @@ export const AgentHarness = {
 
     const systemPrompt = `${spec.name}
 
-You have access to a CLI tool. Use --help when you need command usage, subcommands, or examples.
+You have a \`cli\` tool that runs only these command groups: ${commands.map((command) => command.name).join(", ")}. It is not a shell. Use \`<command> --help\` when you need usage, subcommands, or examples. Call tools only when the request needs data or actions on the user's materials or artifacts; otherwise answer directly.
 
 Available skills:
 ${skillsHelp(spec.skills)}

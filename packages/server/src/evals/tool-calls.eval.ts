@@ -5,7 +5,8 @@ import { AgentHarness, AgentSession } from "../domain/agents/harness/index.ts";
 import { makeMaterialCommands } from "../domain/agents/academic-tutor/material-commands.ts";
 import { AcademicTutorSkills } from "../domain/agents/academic-tutor/skills/index.ts";
 import { MaterialNotFound, MaterialRepository, type PdfMaterial } from "../domain/materials/material.ts";
-import { promptContents, requestBody, skipThoughtSignature, toResponseParts } from "../infra/agents/gemini-language-model.ts";
+import { classifyFailure, promptContents, requestBody, skipThoughtSignature, toResponseParts } from "../infra/agents/gemini-language-model.ts";
+import { describeModelFailure } from "../domain/agents/harness/session.ts";
 
 /**
  * Deterministic eval (no API calls): the tool-call protocol between the harness
@@ -246,6 +247,32 @@ const geminiResponseCase = Effect.sync(() => {
   ];
 });
 
+// --- Case 4: provider failures are classified and explained --------------------
+
+const providerFailureCase = Effect.sync(() => {
+  const dailyQuota = JSON.stringify({
+    error: {
+      code: 429,
+      message: "You exceeded your current quota.\n* Quota exceeded for metric: generate_content_free_tier_requests, limit: 20, model: gemini-3.6-flash\nPlease retry in 59s.",
+      status: "RESOURCE_EXHAUSTED",
+      details: [{ "@type": "type.googleapis.com/google.rpc.QuotaFailure", violations: [{ quotaId: "GenerateRequestsPerDayPerProjectPerModel-FreeTier", quotaValue: "20" }] }]
+    }
+  });
+  const perMinute = JSON.stringify({ error: { code: 429, message: "Rate limit", status: "RESOURCE_EXHAUSTED", details: [{ violations: [{ quotaId: "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" }] }] } });
+
+  const daily = describeModelFailure(classifyFailure(429, dailyQuota, "gemini-3.6-flash"));
+  const minute = describeModelFailure(classifyFailure(429, perMinute, "gemini-3.6-flash"));
+  const overloaded = describeModelFailure(classifyFailure(503, "{\"error\":{\"message\":\"high demand\"}}", "gemini-3.6-flash"));
+  const auth = describeModelFailure(classifyFailure(403, "{\"error\":{\"message\":\"API key not valid\"}}", "gemini-3.6-flash"));
+
+  return [
+    criterion("daily-quota-not-retryable-and-explained", !daily.retryable && daily.message.includes("cuota diaria") && daily.message.includes("gemini-3.6-flash"), daily.message),
+    criterion("per-minute-limit-retryable", minute.retryable && minute.message.includes("por minuto"), minute.message),
+    criterion("overload-retryable", overloaded.retryable && overloaded.message.includes("saturado"), overloaded.message),
+    criterion("auth-error-not-retryable", !auth.retryable && auth.message.includes("clave"), auth.message)
+  ];
+});
+
 // --- Runner ------------------------------------------------------------------
 
 class ToolCallsEvalFailed extends Data.TaggedError("ToolCallsEvalFailed")<{}> {}
@@ -254,7 +281,8 @@ export const toolCallsEval = Effect.gen(function* () {
   const results = [
     ...(yield* harnessHistoryCase.pipe(Effect.provide(FixtureMaterialRepository))),
     ...(yield* streamEventsCase.pipe(Effect.provide(FixtureMaterialRepository))),
-    ...(yield* geminiResponseCase)
+    ...(yield* geminiResponseCase),
+    ...(yield* providerFailureCase)
   ];
 
   const lines = ["academic-tutor.tool-calls"];

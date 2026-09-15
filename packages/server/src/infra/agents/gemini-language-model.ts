@@ -1,4 +1,4 @@
-import { Config, Data, Effect, Layer, Redacted, Schema, Stream } from "effect";
+import { Config, Data, Duration, Effect, Layer, Redacted, Schema, Stream } from "effect";
 import {
   AiError,
   LanguageModel,
@@ -6,6 +6,7 @@ import {
   Response,
   Tool
 } from "effect/unstable/ai";
+import { emitProgress } from "../../domain/agents/harness/event.ts";
 
 /**
  * Gemini adapter for the Effect AI `LanguageModel` service.
@@ -16,7 +17,7 @@ import {
  * and declares tools from their JSON schema.
  */
 
-const defaultModel = "gemini-2.5-flash";
+const defaultModel = "gemini-3.5-flash";
 
 const FunctionCall = Schema.Struct({
   id: Schema.optional(Schema.String),
@@ -326,14 +327,42 @@ export const retryDelayMs = (response: { readonly status: number; readonly heade
   return 5_000;
 };
 
-const sleep = (ms: number, signal: AbortSignal) =>
-  new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      reject(new Error("Request aborted while waiting to retry"));
-    }, { once: true });
-  });
+/**
+ * Classifies a failed Gemini response into a typed `AiError`, so the caller
+ * can decide what to show and whether a retry makes sense.
+ *
+ * A 429 whose quota is a per-day limit is `QuotaExhaustedError` (retrying
+ * within the day is pointless); any other 429 is `RateLimitError`; 503 is
+ * `InternalProviderError` (temporary); 401/403 is `AuthenticationError`.
+ */
+export const classifyFailure = (status: number, errorText: string, model: string): AiError.AiError => {
+  const parsed = parseGeminiError(errorText);
+  const metadata = { model, status, message: parsed.message, quotaId: parsed.quotaId ?? null };
+  const reason = status === 429 && /perday/i.test(parsed.quotaId ?? "")
+    ? new AiError.QuotaExhaustedError({ metadata })
+    : status === 429
+      ? new AiError.RateLimitError({ metadata })
+      : status === 503
+        ? new AiError.InternalProviderError({ description: parsed.message, metadata })
+        : status === 401 || status === 403
+          ? new AiError.AuthenticationError({ kind: "Unknown", metadata })
+          : new AiError.UnknownError({ description: parsed.message, metadata });
+
+  return AiError.make({ module: "GeminiLanguageModel", method: "generateText", reason });
+};
+
+const parseGeminiError = (errorText: string): { readonly message: string; readonly quotaId: string | undefined } => {
+  try {
+    const json = JSON.parse(errorText) as {
+      error?: { message?: string; details?: Array<{ violations?: Array<{ quotaId?: string }> }> };
+    };
+    const message = json.error?.message?.split("\n")[0] ?? errorText;
+    const quotaId = json.error?.details?.flatMap((detail) => detail.violations ?? []).find((violation) => violation.quotaId)?.quotaId;
+    return { message, quotaId };
+  } catch {
+    return { message: errorText.slice(0, 300), quotaId: undefined };
+  }
+};
 
 const geminiUrl = (model: string, apiKey: string) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
@@ -392,40 +421,65 @@ export const GeminiLanguageModelLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* GeminiConfig;
 
-    return yield* LanguageModel.make({
-      generateText: (options) =>
-        Effect.tryPromise({
-          try: async (signal) => {
-            const body = JSON.stringify(requestBody(options));
+    // One HTTP attempt. Transient provider failures (429 rate limit, 503 overload)
+    // are returned as `{ retryAfterMs }` so the caller can wait visibly.
+    const attemptOnce = (body: string, tools: LanguageModel.ProviderOptions["tools"]) =>
+      Effect.tryPromise({
+        try: async (signal): Promise<{ readonly parts: Array<Response.PartEncoded> } | { readonly retryAfterMs: number; readonly errorText: string }> => {
+          const response = await fetch(geminiUrl(config.model, config.apiKey), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body,
+            signal
+          });
 
-            for (let attempt = 1; ; attempt++) {
-              const response = await fetch(geminiUrl(config.model, config.apiKey), {
-                method: "POST",
-                headers: { "content-type": "application/json" },
-                body,
-                signal
-              });
-
-              if (response.ok) {
-                const raw: unknown = await response.json();
-                if (process.env.GEMINI_DEBUG === "1") {
-                  console.error(`[gemini] raw candidate parts: ${JSON.stringify((raw as { candidates?: unknown }).candidates).slice(0, 3000)}`);
-                }
-                const json = decodeGeminiResponse(raw);
-                return toResponseParts(json.candidates?.[0]?.content?.parts ?? [], options.tools);
-              }
-
-              const errorText = await response.text();
-              const delayMs = retryDelayMs(response, errorText);
-              if (attempt >= maxAttempts || delayMs === undefined) {
-                throw new Error(errorText);
-              }
-
-              await sleep(delayMs, signal);
+          if (response.ok) {
+            const raw: unknown = await response.json();
+            if (process.env.GEMINI_DEBUG === "1") {
+              console.error(`[gemini] raw candidate parts: ${JSON.stringify((raw as { candidates?: unknown }).candidates).slice(0, 3000)}`);
             }
-          },
-          catch: (cause) => toAiError(cause instanceof Error ? cause.message : String(cause))
-        }),
+            const json = decodeGeminiResponse(raw);
+            return { parts: toResponseParts(json.candidates?.[0]?.content?.parts ?? [], tools) };
+          }
+
+          const errorText = await response.text();
+          const failure = classifyFailure(response.status, errorText, config.model);
+          const retryAfterMs = retryDelayMs(response, errorText);
+          // Only transient failures are worth waiting for.
+          const transient = failure.reason._tag === "RateLimitError" || failure.reason._tag === "InternalProviderError";
+          if (retryAfterMs === undefined || !transient) {
+            throw failure;
+          }
+          return { retryAfterMs, errorText };
+        },
+        catch: (cause) => cause instanceof AiError.AiError
+          ? cause
+          : toAiError(cause instanceof Error ? cause.message : String(cause))
+      });
+
+    return yield* LanguageModel.make({
+      generateText: (options) => Effect.gen(function* () {
+        const body = JSON.stringify(requestBody(options));
+
+        for (let attempt = 1; ; attempt++) {
+          const result = yield* attemptOnce(body, options.tools);
+          if ("parts" in result) {
+            return result.parts;
+          }
+
+          if (attempt >= maxAttempts) {
+            return yield* classifyFailure(429, result.errorText, config.model);
+          }
+
+          // Waiting is visible: a trace line for the log and a progress event for the UI.
+          const seconds = Math.ceil(result.retryAfterMs / 1000);
+          yield* Effect.logWarning("gemini rate limited, waiting before retry").pipe(
+            Effect.annotateLogs({ "agent.event": "model.retry", "agent.attempt": attempt, "agent.waitMs": result.retryAfterMs })
+          );
+          yield* emitProgress(`Límite de peticiones del proveedor: reintentando en ${seconds} s (intento ${attempt} de ${maxAttempts - 1})`);
+          yield* Effect.sleep(Duration.millis(result.retryAfterMs));
+        }
+      }),
       streamText: () => Stream.empty
     });
   })

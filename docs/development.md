@@ -20,7 +20,7 @@ Edita `.env`:
 
 ```env
 GOOGLE_GENERATIVE_AI_API_KEY=...
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.5-flash
 PORT=3000
 WEB_PORT=5173
 PROXUS_API_URL=http://localhost:3000

@@ -1,5 +1,5 @@
 import { Cause, Effect, Queue, Stream } from "effect";
-import { LanguageModel, Prompt, Tool } from "effect/unstable/ai";
+import { AiError, LanguageModel, Prompt, Tool } from "effect/unstable/ai";
 import { AgentEventSink, type SessionEvent } from "./event.ts";
 import { newTurnId, timed, traceGrounding, traceModelCall, traceModelError, traceTurnFinished, traceTurnStarted, withTurn } from "./trace.ts";
 import type { AgentHarness, AgentToolkit } from "./harness.ts";
@@ -102,8 +102,9 @@ function execute(
         // turn. No assistant message is fabricated; the caller may retry the same input.
         const error = Cause.squash(exit.cause);
         yield* traceModelError({ step, durationMs, error });
-        const output = modelErrorText(error);
-        yield* emit({ type: "error", message: output, retryable: true });
+        const failure = describeModelFailure(error);
+        const output = failure.message;
+        yield* emit({ type: "error", message: output, retryable: failure.retryable });
         yield* traceTurnFinished({ steps: step + 1, outputLength: output.length, reason: "error" });
         return {
           output,
@@ -191,8 +192,51 @@ const isMaterialsCommand = (message: AgentMessageType, subcommand: "list" | "vie
   return typeof input === "string" && new RegExp(`^\\s*materials\\s+${subcommand}\\b`).test(input);
 };
 
-const modelErrorText = (error: unknown): string =>
-  `I hit an internal model/tool-routing error, so I stopped this turn safely instead of crashing the app.\n\n${formatAgentError(error)}`;
+/**
+ * Turns a model/provider failure into what the student should read, and
+ * whether resending the same input can help. Typed `AiError` reasons (from the
+ * adapter) get a specific message; anything else is reported as an internal
+ * error with its message.
+ */
+export const describeModelFailure = (error: unknown): { readonly message: string; readonly retryable: boolean } => {
+  if (error instanceof AiError.AiError) {
+    const reason = error.reason;
+    const metadata = metadataOf(reason);
+    const model = typeof metadata.model === "string" ? metadata.model : "el modelo";
+    switch (reason._tag) {
+      case "QuotaExhaustedError":
+        return {
+          message: `Se ha agotado la cuota diaria gratuita del proveedor para ${model}. Cambia GEMINI_MODEL en .env o activa facturación en la clave de Gemini.`,
+          retryable: false
+        };
+      case "RateLimitError":
+        return {
+          message: `El proveedor limita las peticiones por minuto de ${model} y no ha respondido tras varios reintentos. Espera un minuto y vuelve a intentarlo.`,
+          retryable: true
+        };
+      case "InternalProviderError":
+        return { message: `El proveedor de ${model} está saturado ahora mismo. Vuelve a intentarlo en unos segundos.`, retryable: true };
+      case "AuthenticationError":
+        return { message: "La clave de Gemini no es válida o no tiene permisos. Revisa GOOGLE_GENERATIVE_AI_API_KEY en .env.", retryable: false };
+      default: {
+        const detail = typeof metadata.message === "string"
+          ? metadata.message
+          : "description" in reason && typeof reason.description === "string" ? reason.description : formatAgentError(error);
+        return { message: `El tutor no ha podido responder por un error del modelo: ${detail}`, retryable: true };
+      }
+    }
+  }
+
+  return {
+    message: `I hit an internal model/tool-routing error, so I stopped this turn safely instead of crashing the app.\n\n${formatAgentError(error)}`,
+    retryable: true
+  };
+};
+
+const metadataOf = (reason: unknown): Record<string, unknown> =>
+  typeof reason === "object" && reason !== null && "metadata" in reason && typeof reason.metadata === "object" && reason.metadata !== null
+    ? reason.metadata as Record<string, unknown>
+    : {};
 
 const formatAgentError = (error: unknown) => {
   if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {

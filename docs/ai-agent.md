@@ -84,7 +84,7 @@ Implementación en `packages/server/src/domain/agents/harness/trace.ts`; el eval
 
 ```env
 GOOGLE_GENERATIVE_AI_API_KEY=...
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.5-flash
 ```
 
 ## Buenas prácticas al tocar AI
