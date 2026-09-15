@@ -15,7 +15,8 @@ packages/server/.data/
       <attemptId>.json
   materials/
     pdfs/
-      *.pdf
+      <id>.pdf
+      <id>.meta.json      # título y fecha de subida (solo para PDFs subidos desde la UI)
 ```
 
 ## Materials

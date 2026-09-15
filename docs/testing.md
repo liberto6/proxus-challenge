@@ -27,6 +27,8 @@ pnpm --filter @proxus/server run eval:tutor:tool-calls
 pnpm --filter @proxus/server run eval:tutor:grounding
 # sesiones persistidas: historial en servidor, reintento sin duplicados
 pnpm --filter @proxus/server run eval:tutor:sessions
+# subida y borrado de PDFs sobre un directorio temporal (necesita Poppler)
+pnpm --filter @proxus/server run eval:materials
 ```
 
 Con API y Poppler, el eval de anclaje añade 6 casos contra el modelo real usando el PDF sintético de `packages/server/fixtures/materials` (unas 20 llamadas; con la cuota gratuita de Gemini el adapter espera y reintenta ante `429`):

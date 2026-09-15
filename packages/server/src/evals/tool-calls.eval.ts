@@ -44,7 +44,9 @@ const FixtureMaterialRepository = Layer.succeed(MaterialRepository, {
   get: (id) => id === fixtureMaterial.id
     ? Effect.succeed(fixtureMaterial)
     : Effect.fail(new MaterialNotFound({ materialId: id })),
-  renderPages: (materialId) => Effect.fail(new MaterialNotFound({ materialId }))
+  renderPages: (materialId) => Effect.fail(new MaterialNotFound({ materialId })),
+  save: () => Effect.die("material repository save is not used by this eval"),
+  remove: () => Effect.die("material repository remove is not used by this eval")
 });
 
 const makeHarness = (materialRepository: MaterialRepository) => AgentHarness.make({

@@ -28,14 +28,15 @@ const make = (): Effect.Effect<PdfServiceType, PdfServiceError, ChildProcessSpaw
   const pageCount = (pdfPath: string) => spawner.string(
     ChildProcess.make("pdfinfo", [pdfPath])
   ).pipe(
-    Effect.map((output) => {
+    Effect.mapError((reason) => new PdfServiceError({ reason })),
+    Effect.flatMap((output) => {
       const match = /^Pages:\s+(\d+)$/m.exec(output);
-      if (match === null) {
-        throw new Error(`Could not read page count for ${pdfPath}`);
-      }
-      return Number(match[1]);
-    }),
-    Effect.mapError((reason) => new PdfServiceError({ reason }))
+      // A typed failure, not a thrown defect: callers (upload validation, listing)
+      // must be able to handle an unreadable PDF.
+      return match === null
+        ? Effect.fail(new PdfServiceError({ reason: `Could not read page count for ${pdfPath}` }))
+        : Effect.succeed(Number(match[1]));
+    })
   );
 
   const renderPage: PdfServiceType["renderPage"] = ({ path: pdfPath, page, dpi = 144 }) => Effect.gen(function* () {

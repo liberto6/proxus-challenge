@@ -33,6 +33,19 @@ export class MaterialRepositoryError extends Data.TaggedError("MaterialRepositor
   readonly reason: unknown;
 }> {}
 
+/** The uploaded file is not a usable PDF (wrong format, empty, unreadable). */
+export class InvalidMaterialFile extends Data.TaggedError("InvalidMaterialFile")<{
+  readonly fileName: string;
+  readonly reason: string;
+}> {}
+
+export interface SaveMaterialInput {
+  /** Display title; the material id is derived from it. */
+  readonly title: string;
+  readonly fileName: string;
+  readonly bytes: Uint8Array;
+}
+
 export interface MaterialRepository {
   readonly list: () => Effect.Effect<readonly PdfMaterial[], MaterialRepositoryError>;
   readonly get: (id: string) => Effect.Effect<PdfMaterial, MaterialNotFound | MaterialRepositoryError>;
@@ -40,7 +53,29 @@ export interface MaterialRepository {
     id: string,
     pages: readonly number[]
   ) => Effect.Effect<MaterialPageImages, MaterialNotFound | MaterialRepositoryError>;
+  /** Validates and stores a PDF; returns the new material. */
+  readonly save: (input: SaveMaterialInput) => Effect.Effect<PdfMaterial, InvalidMaterialFile | MaterialRepositoryError>;
+  readonly remove: (id: string) => Effect.Effect<void, MaterialNotFound | MaterialRepositoryError>;
 }
+
+/** Stable, URL-safe id from a title plus a short random suffix to avoid collisions. */
+export const materialIdFor = (title: string, suffix: string = crypto.randomUUID().slice(0, 6)): string => {
+  const slug = title
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 40)
+    .replace(/-+$/g, "");
+  return `${slug.length > 0 ? slug : "material"}-${suffix}`;
+};
+
+/** Title from an uploaded file name: extension removed, separators as spaces. */
+export const titleFromFileName = (fileName: string): string => {
+  const base = fileName.replace(/\.pdf$/i, "").replace(/[_-]+/g, " ").trim();
+  return base.length > 0 ? base : "Material";
+};
 
 export const MaterialRepository = Context.Service<MaterialRepository>(
   "@proxus/server/materials/MaterialRepository"

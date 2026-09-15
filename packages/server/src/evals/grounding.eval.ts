@@ -57,7 +57,9 @@ const ScriptedMaterialRepository = Layer.succeed(MaterialRepository, {
         material: fixtureMaterial,
         pages: pages.map((page) => ({ page, mediaType: "image/png", data: `data:image/png;base64,${onePixelPng}` }))
       })
-    : Effect.fail(new MaterialNotFound({ materialId }))
+    : Effect.fail(new MaterialNotFound({ materialId })),
+  save: () => Effect.die("material repository save is not used by this eval"),
+  remove: () => Effect.die("material repository remove is not used by this eval")
 });
 
 const makeHarness = (materialRepository: MaterialRepository) => AgentHarness.make({

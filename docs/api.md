@@ -37,11 +37,15 @@ La ruta streaming está implementada manualmente para soportar eventos increment
 ### Materials
 
 ```http
-GET /api/materials/
-GET /api/materials/:id
+GET    /api/materials/          # lista
+GET    /api/materials/:id
+POST   /api/materials/          # multipart: file (PDF, máx. 20 MB) y title opcional -> PdfMaterial
+DELETE /api/materials/:id       # 404 si no existe
 ```
 
 Los materiales representan PDFs disponibles para el tutor. El server puede renderizar páginas vía Poppler para que Gemini las procese como imágenes.
+
+La subida valida cabecera PDF y que Poppler pueda leerlo (400 si no). El id se deriva del título (slug más sufijo corto), por ejemplo `ciclo-del-agua-a1b2c3`; el título se guarda en `<id>.meta.json` junto al PDF. Los PDFs copiados a mano sin sidecar siguen funcionando con su nombre de fichero como id y título.
 
 ### Artifacts
 

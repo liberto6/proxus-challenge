@@ -42,7 +42,9 @@ const fixtureMaterial: PdfMaterial = {
 const FixtureMaterialRepository = Layer.succeed(MaterialRepository, {
   list: () => Effect.succeed([fixtureMaterial]),
   get: (id) => id === fixtureMaterial.id ? Effect.succeed(fixtureMaterial) : Effect.fail(new MaterialNotFound({ materialId: id })),
-  renderPages: (materialId) => Effect.fail(new MaterialNotFound({ materialId }))
+  renderPages: (materialId) => Effect.fail(new MaterialNotFound({ materialId })),
+  save: () => Effect.die("material repository save is not used by this eval"),
+  remove: () => Effect.die("material repository remove is not used by this eval")
 });
 
 // Artifacts are not exercised here; the service only needs the port to exist.

@@ -275,7 +275,9 @@ const makeMaterialRepository = (materials: readonly MaterialFixture[]) => Materi
       material: toPdfMaterial(material),
       pages: renderedPages
     });
-  }
+  },
+  save: () => Effect.die("material repository save is not used by this eval"),
+  remove: () => Effect.die("material repository remove is not used by this eval")
 });
 
 const toPdfMaterial = (material: MaterialFixture): PdfMaterial => ({
