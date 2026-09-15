@@ -8,7 +8,8 @@
     "dev": "pnpm --parallel --filter @proxus/server --filter @proxus/web run dev",
     "prepare": "effect-language-service patch",
     "typecheck": "pnpm -r typecheck",
-    "typecheck:root": "tsc --noEmit"
+    "typecheck:root": "tsc --noEmit",
+    "check:architecture": "node scripts/check-architecture.mjs"
   },
   "devDependencies": {
     "@effect/language-service": "^0.86.2",
