@@ -38,7 +38,7 @@ export const TutorChatServiceLive = Layer.effect(
         Effect.provide(harness.layer)
       ),
       streamMessage: (input) => session.stream(sessionInput(input)).pipe(
-        Stream.map((message): TutorChatStreamEvent => ({ type: "message", message })),
+        Stream.map((event): TutorChatStreamEvent => event),
         Stream.concat(Stream.succeed({ type: "done" as const })),
         Stream.provide(harness.layer)
       )

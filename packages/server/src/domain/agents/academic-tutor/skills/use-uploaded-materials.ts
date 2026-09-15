@@ -22,6 +22,12 @@ export const UseUploadedMaterialsSkill = AgentSkill.make({
     "2. When the user asks about a PDF or page range, call `materials view` with the smallest useful page range.",
     "3. Treat rendered pages as the source of truth.",
     "4. If the rendered pages do not contain enough evidence, say so clearly.",
-    "5. When explaining, cite page numbers from the rendered result."
+    "5. When explaining, cite page numbers from the rendered result.",
+    "",
+    "Grounding rules (checked by the system):",
+    "- Never describe, quote, summarize, or cite the content of a page you have not rendered in this conversation, even if you believe you remember it.",
+    "- Never invent a document title, section, or wording: use the title from `materials list` and the text visible in the rendered pages.",
+    "- If the user names pages, render exactly those pages before answering; if they are out of range, say so.",
+    "- If no uploaded material matches the request, say that there is no such material instead of answering from general knowledge as if it came from the material."
   ].join("\n")
 });

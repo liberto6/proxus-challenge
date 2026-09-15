@@ -1,18 +1,26 @@
 import { Schema } from "effect";
-import { TutorChatStreamEvent, type TutorChatRequest, type TutorChatStreamEvent as TutorChatStreamEventType } from "@proxus/shared";
+import { AgentEvent, type TutorChatRequest } from "@proxus/shared";
 import { apiClientConfig } from "../../api-client/config.ts";
 
-const TutorChatStreamEventFromJsonString = Schema.fromJsonString(TutorChatStreamEvent);
-const decodeEvent = Schema.decodeUnknownSync(TutorChatStreamEventFromJsonString);
+const AgentEventFromJsonString = Schema.fromJsonString(AgentEvent);
+const decodeEvent = Schema.decodeUnknownSync(AgentEventFromJsonString);
 
-export async function* streamTutorMessage(input: TutorChatRequest): AsyncGenerator<TutorChatStreamEventType> {
+/**
+ * Streams one tutor turn as typed `AgentEvent`s (NDJSON). Pass an `AbortSignal`
+ * to cancel: the server stops the turn when the connection closes.
+ */
+export async function* streamTutorMessage(
+  input: TutorChatRequest,
+  signal?: AbortSignal
+): AsyncGenerator<AgentEvent> {
   const response = await fetch(`${apiClientConfig.apiUrl}/api/tutor/chat/stream`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "accept": "application/x-ndjson"
     },
-    body: JSON.stringify(input)
+    body: JSON.stringify(input),
+    ...(signal === undefined ? {} : { signal })
   });
 
   if (!response.ok) {

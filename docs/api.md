@@ -16,12 +16,16 @@ POST /api/tutor/chat
 POST /api/tutor/chat/stream
 ```
 
-`/stream` devuelve NDJSON:
+`/stream` devuelve NDJSON con eventos `AgentEvent` (`packages/shared/src/schemas/agent-event.ts`):
 
 ```json
-{ "type": "message", "message": {} }
+{ "type": "message", "message": { "role": "user | assistant | tool-call | tool-result" } }
+{ "type": "progress", "label": "Leyendo páginas 1-2 de ciclo-del-agua" }
+{ "type": "error", "message": "...", "retryable": true }
 { "type": "done" }
 ```
+
+`message` son los mensajes persistibles de la conversación; `progress` es transitorio (qué está haciendo el tutor ahora); `error` cierra el turno sin respuesta del tutor y la web ofrece reintentar. Cerrar la conexión cancela el turno.
 
 La ruta streaming está implementada manualmente para soportar eventos incrementales.
 

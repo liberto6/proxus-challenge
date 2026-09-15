@@ -5,7 +5,7 @@ import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstab
 import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi";
 import { LanguageModel } from "effect/unstable/ai";
 import { ProxusApi, TutorChatRequest, TutorChatStreamEvent } from "@proxus/shared";
-import { GeminiModel } from "../../domain/agents/gemini.ts";
+import { GeminiModel } from "../../infra/agents/gemini-language-model.ts";
 import { TutorChatService, TutorChatServiceLive } from "../../domain/agents/academic-tutor/tutor-chat-service.ts";
 import { FileArtifactRepository } from "../../infra/artifacts/file-artifact-repository.ts";
 import { FileMaterialRepository } from "../../infra/materials/file-material-repository.ts";

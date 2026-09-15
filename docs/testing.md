@@ -6,6 +6,7 @@ Desde la raíz:
 
 ```bash
 pnpm run typecheck
+pnpm run check:architecture
 pnpm --filter @proxus/web run build
 ```
 
@@ -16,6 +17,24 @@ pnpm --filter @proxus/server run typecheck
 ```
 
 ## Evals / smoke tests AI
+
+Sin API (deterministas):
+
+```bash
+# protocolo de tool calls entre harness y adapter de Gemini
+pnpm --filter @proxus/server run eval:tutor:tool-calls
+# guardia de anclaje: el tutor solo cita páginas que ha renderizado
+pnpm --filter @proxus/server run eval:tutor:grounding
+```
+
+Con API y Poppler, el eval de anclaje añade 6 casos contra el modelo real usando el PDF sintético de `packages/server/fixtures/materials` (unas 20 llamadas; con la cuota gratuita de Gemini el adapter espera y reintenta ante `429`):
+
+```bash
+GROUNDING_LIVE=1 pnpm --filter @proxus/server run eval:tutor:grounding
+# un subconjunto: GROUNDING_CASES=L1,L4
+# otro modelo solo para el eval: GEMINI_MODEL=gemini-3.5-flash-lite
+# ver la respuesta cruda de Gemini: GEMINI_DEBUG=1
+```
 
 Requieren `.env` con `GOOGLE_GENERATIVE_AI_API_KEY`.
 

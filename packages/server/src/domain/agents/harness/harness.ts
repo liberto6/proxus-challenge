@@ -2,6 +2,8 @@ import { Effect, Layer, Schema } from "effect";
 import { Tool, Toolkit } from "effect/unstable/ai";
 import * as AgentCli from "./cli.ts";
 import type { AgentSkill } from "./skill.ts";
+import { traceToolCall } from "./trace.ts";
+import { emitProgress, progressLabelFor } from "./event.ts";
 
 const LoadSkill = Tool.make("load_skill", {
   description: "Load the full instructions for a listed skill by name.",
@@ -65,10 +67,10 @@ Skill text may describe workflows, conventions, examples, or tools available els
       name: spec.name,
       toolkit: AgentToolkit,
       layer: AgentToolkit.toLayer({
-        load_skill: ({ name }) => loadSkill(name),
-        cli: ({ input }) => AgentCli.execute(commands, input).pipe(
+        load_skill: ({ name }) => traced("load_skill", { name }, loadSkill(name)),
+        cli: ({ input }) => traced("cli", { input }, AgentCli.execute(commands, input).pipe(
           Effect.mapError(AgentCli.renderError)
-        )
+        ))
       }),
       systemPrompt,
       skills: spec.skills,
@@ -77,6 +79,17 @@ Skill text may describe workflows, conventions, examples, or tools available els
     };
   }
 };
+
+/** Executes a tool handler and emits one trace line with its duration and outcome. */
+const traced = <A, E, R>(tool: string, input: unknown, handler: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.gen(function* () {
+    yield* emitProgress(progressLabelFor(tool, input));
+    const startedAt = Date.now();
+    const exit = yield* Effect.exit(handler);
+    const durationMs = Date.now() - startedAt;
+    yield* traceToolCall({ tool, input, durationMs, isFailure: exit._tag === "Failure" });
+    return yield* exit;
+  });
 
 const skillsHelp = (skills: readonly AgentSkill[]) =>
   skills.map((skill) => `- ${skill.name}: ${skill.description}`).join("\n");

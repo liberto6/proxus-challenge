@@ -5,11 +5,13 @@
   "type": "module",
   "main": "./src/index.ts",
   "scripts": {
-    "agent:sum": "node --env-file=../../.env --import tsx src/domain/agents/index.ts",
-    "agent:math": "node --env-file=../../.env --import tsx src/domain/agents/math.ts",
-    "agent:tutor": "node --env-file=../../.env --import tsx src/domain/agents/academic-tutor.ts",
+    "agent:sum": "node --env-file=../../.env --import tsx src/scripts/agent-sum.ts",
+    "agent:math": "node --env-file=../../.env --import tsx src/scripts/agent-math.ts",
+    "agent:tutor": "node --env-file=../../.env --import tsx src/scripts/agent-tutor.ts",
     "dev": "node --env-file=../../.env --import tsx src/index.ts",
-    "eval:tutor:artifact-authoring": "node --env-file=../../.env --import tsx src/domain/agents/academic-tutor/evals/artifact-authoring.eval.ts",
+    "eval:tutor:artifact-authoring": "node --env-file=../../.env --import tsx src/evals/artifact-authoring.eval.ts",
+    "eval:tutor:tool-calls": "node --import tsx src/evals/tool-calls.eval.ts",
+    "eval:tutor:grounding": "node --env-file=../../.env --import tsx src/evals/grounding.eval.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -1,3 +1,4 @@
+import { isMain } from "../lib/is-main.ts";
 import { Effect, Layer, Schema } from "effect";
 import {
   LanguageModel,
@@ -5,7 +6,7 @@ import {
   Tool,
   Toolkit
 } from "effect/unstable/ai";
-import { GeminiModel } from "./gemini.ts";
+import { GeminiModel } from "../infra/agents/gemini-language-model.ts";
 
 const Sum = Tool.make("sum", {
   description: "Add two numbers",
@@ -44,6 +45,6 @@ export const sumAgent = Effect.gen(function* () {
   Effect.provide(Layer.mergeAll(SumToolkitLive, GeminiModel))
 );
 
-if (import.meta.main) {
+if (isMain(import.meta.url)) {
   Effect.runPromise(sumAgent);
 }

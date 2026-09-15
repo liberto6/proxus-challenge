@@ -13,7 +13,7 @@ El tutor ayuda a estudiar usando materiales locales y creando artefactos de apre
 - `packages/server/src/domain/agents/academic-tutor.ts`
 - `packages/server/src/domain/agents/academic-tutor/tutor-chat-service.ts`
 - `packages/server/src/domain/agents/harness/session.ts`
-- `packages/server/src/domain/agents/gemini.ts`
+- `packages/server/src/infra/agents/gemini-language-model.ts`
 
 Skills:
 
@@ -33,6 +33,8 @@ El modelo no recibe acceso directo a todo el backend. El harness le expone tools
 - `cli({ command })`: ejecuta comandos permitidos.
 
 Las skills no son tools. Si Gemini intenta llamar una skill como tool, el adapter redirige esa llamada a `load_skill` cuando puede.
+
+El historial se envía al modelo con partes nativas `tool-call` / `tool-result` (function calling de Gemini), nunca como texto: cuando se renderizaba como texto tipo `Tool call cli: {...}`, el modelo aprendía a responder con ese texto en lugar de llamar a la tool. El eval `eval:tutor:tool-calls` protege este contrato sin llamar a la API.
 
 ## Comandos disponibles
 
@@ -66,6 +68,17 @@ artifacts grade <attemptId>
    - `{ type: "message", message }`
    - `{ type: "done" }`
 6. Si hubo tool results, la web invalida materiales/artifacts.
+
+## Trazas en servidor
+
+Cada turno del agente emite líneas de log estructuradas (logger de Effect, el mismo que usa la capa HTTP) con la anotación `agent.turn` compartida por todo el turno y `agent.event` con el tipo de evento:
+
+- `turn.started` / `turn.finished` (pasos, longitud de la respuesta, motivo: `answer` o `max-steps`).
+- `model.call` (paso, `agent.durationMs`, tools pedidas, longitud del texto) y `model.error` (mensaje del proveedor, por ejemplo un 429).
+- `tool.call` / `tool.failed` (`agent.tool`, `agent.input` resumido, `agent.durationMs`).
+- `grounding.retry` / `grounding.flagged` (páginas citadas sin renderizar).
+
+Implementación en `packages/server/src/domain/agents/harness/trace.ts`; el eval `eval:tutor:tool-calls` comprueba que un turno produce estas líneas.
 
 ## Configuración
 

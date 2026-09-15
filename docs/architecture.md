@@ -131,7 +131,7 @@ flowchart TB
   end
 
   subgraph Infra["Infrastructure layer"]
-    Gemini["domain/agents/gemini.ts\nGemini LanguageModel adapter"]
+    Gemini["infra/agents/gemini-language-model.ts\nGemini LanguageModel adapter"]
     FileMaterials["infra/materials\nFileMaterialRepository"]
     Poppler["infra/materials\nPopplerPdfService"]
     FileArtifacts["infra/artifacts\nFileArtifactRepository"]
@@ -197,11 +197,13 @@ Archivos principales:
 - `packages/server/src/infra/artifacts/file-artifact-repository.ts`
 - `packages/server/src/infra/materials/file-material-repository.ts`
 - `packages/server/src/infra/materials/poppler-pdf-service.ts`
-- `packages/server/src/domain/agents/gemini.ts`
+- `packages/server/src/infra/agents/gemini-language-model.ts`
 
 Esta capa implementa los puertos del dominio usando tecnología concreta: archivos JSON, PDFs locales, comandos Poppler, Gemini y servicios de Node.
 
-Nota: `gemini.ts` está bajo `domain/agents` por cercanía al agente, pero conceptualmente actúa como adapter de infraestructura para `LanguageModel`. Es una de las zonas que un candidato podría reorganizar si quiere dejar las capas más limpias.
+El adapter de Gemini vive en `infra/agents/gemini-language-model.ts`: traduce el prompt de Effect AI (incluidas las partes `tool-call` y `tool-result`) al formato de function calling de Gemini y declara las tools a partir de su JSON Schema.
+
+Los entrypoints CLI (`src/scripts/*`) y los evals (`src/evals/*`) componen capas, así que viven fuera de `domain`. La regla de dependencias se comprueba con `pnpm run check:architecture` (ver `AGENTS.md`).
 
 ### Regla práctica
 

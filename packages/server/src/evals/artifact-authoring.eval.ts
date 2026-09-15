@@ -1,8 +1,9 @@
+import { isMain } from "../lib/is-main.ts";
 import { Console, Context, Data, Effect, Layer, Ref, Schema } from "effect";
-import { GeminiModel } from "../../gemini.ts";
-import { AgentSession } from "../../harness/index.ts";
-import { type AgentMessage } from "../../harness/message.ts";
-import { makeAcademicTutorHarness } from "../../academic-tutor.ts";
+import { GeminiModel } from "../infra/agents/gemini-language-model.ts";
+import { AgentSession } from "../domain/agents/harness/index.ts";
+import { type AgentMessage } from "../domain/agents/harness/message.ts";
+import { makeAcademicTutorHarness } from "../domain/agents/academic-tutor.ts";
 import {
   Artifact,
   ArtifactAttempt,
@@ -15,13 +16,13 @@ import {
   type ListArtifactsInput,
   type SubmitAttemptInput,
   gradeAttempt
-} from "../../../artifacts/artifact.ts";
+} from "../domain/artifacts/artifact.ts";
 import {
   MaterialNotFound,
   MaterialRepository,
   type MaterialPageImages,
   type PdfMaterial
-} from "../../../materials/material.ts";
+} from "../domain/materials/material.ts";
 
 const EvalId = Schema.String;
 const EvalCaseId = Schema.String;
@@ -468,6 +469,6 @@ export const artifactAuthoringEval = runDataset(dataset).pipe(
   )
 );
 
-if (import.meta.main) {
+if (isMain(import.meta.url)) {
   Effect.runPromise(artifactAuthoringEval);
 }

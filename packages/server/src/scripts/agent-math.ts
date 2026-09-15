@@ -1,10 +1,11 @@
+import { isMain } from "../lib/is-main.ts";
 import { Console, Effect, Layer, Stream } from "effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Model as AiModel } from "effect/unstable/ai";
-import * as AgentCli from "./harness/index.ts";
-import { AgentHarness, AgentSession, AgentSkill, SessionRepository } from "./harness/index.ts";
-import { GeminiModel } from "./gemini.ts";
-import { FileSessionRepository } from "../../infra/agents/file-session-repository.ts";
+import * as AgentCli from "../domain/agents/harness/index.ts";
+import { AgentHarness, AgentSession, AgentSkill, SessionRepository } from "../domain/agents/harness/index.ts";
+import { GeminiModel } from "../infra/agents/gemini-language-model.ts";
+import { FileSessionRepository } from "../infra/agents/file-session-repository.ts";
 
 const MathArgs = {
   a: AgentCli.Argument.number("a").pipe(
@@ -123,26 +124,30 @@ export const mathAgent2 = Effect.gen(function* () {
   console.log(`Session: ${sessionId}`);
   console.log("Conversation messages:");
 
-  const messages = yield* session.stream({
+  const events = yield* session.stream({
     input: task,
     messages: storedSession.messages,
     maxSteps: 5
   }).pipe(
-    Stream.tap((message) => Effect.gen(function* () {
+    Stream.tap((event) => Effect.gen(function* () {
+      if (event.type !== "message") {
+        yield* Console.log(event.type === "progress" ? `… ${event.label}` : `Turn failed: ${event.message}`);
+        return;
+      }
       yield* repository.appendMessages({
         sessionId,
-        messages: [message]
+        messages: [event.message]
       });
-      yield* Console.log(JSON.stringify(message, null, 2));
+      yield* Console.log(JSON.stringify(event.message, null, 2));
     })),
     Stream.runCollect
   );
 
   let output = "";
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index];
-    if (message?.role === "assistant") {
-      output = message.content;
+  for (let index = events.length - 1; index >= 0; index--) {
+    const event = events[index];
+    if (event?.type === "message" && event.message.role === "assistant") {
+      output = event.message.content;
       break;
     }
   }
@@ -160,6 +165,6 @@ export const mathAgent2 = Effect.gen(function* () {
   ))
 );
 
-if (import.meta.main) {
+if (isMain(import.meta.url)) {
   Effect.runPromise(mathAgent2);
 }

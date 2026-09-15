@@ -24,12 +24,15 @@ const AssistantMessageSchema = Schema.Struct({
 
 const ToolCallMessageSchema = Schema.Struct({
   role: Schema.Literal("tool-call"),
+  id: Schema.String,
   name: Schema.String,
-  input: Schema.Unknown
+  input: Schema.Unknown,
+  metadata: Schema.optional(Schema.Record(Schema.String, Schema.Unknown))
 });
 
 const ToolResultMessageSchema = Schema.Struct({
   role: Schema.Literal("tool-result"),
+  id: Schema.String,
   name: Schema.String,
   result: Schema.Unknown,
   isFailure: Schema.Boolean
