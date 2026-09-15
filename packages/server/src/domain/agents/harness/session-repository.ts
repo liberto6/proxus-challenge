@@ -39,6 +39,14 @@ export type SessionRepositoryError =
   | SessionRepositoryStorageError
   | SessionRepositorySerializationError;
 
+export interface StoredAgentSessionSummary {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly messageCount: number;
+  readonly preview: string;
+}
+
 export interface SessionRepository {
   readonly getSession: (
     id: string
@@ -49,7 +57,21 @@ export interface SessionRepository {
   readonly appendMessages: (
     input: AppendMessagesInput
   ) => Effect.Effect<void, SessionRepositoryError>;
+  /** Sessions ordered by last update, newest first. */
+  readonly listSessions: () => Effect.Effect<readonly StoredAgentSessionSummary[], SessionRepositoryError>;
 }
+
+export const summarizeSession = (session: StoredAgentSession): StoredAgentSessionSummary => {
+  const firstUser = session.messages.find((message) => message.role === "user");
+  const preview = firstUser === undefined ? "" : firstUser.content.replace(/\s+/g, " ").trim().slice(0, 80);
+  return {
+    id: session.id,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    messageCount: session.messages.length,
+    preview
+  };
+};
 
 export const SessionRepository = Context.Service<SessionRepository>(
   "@proxus/server/agents/SessionRepository"

@@ -9,7 +9,8 @@ import {
   type MakeSessionInput,
   type SessionRepository as SessionRepositoryType,
   type SessionRepositoryError,
-  type StoredAgentSession
+  type StoredAgentSession,
+  summarizeSession
 } from "../../domain/agents/harness/index.ts";
 
 const UserMessageSchema = Schema.Struct({
@@ -142,10 +143,28 @@ export const FileSessionRepository = {
       yield* writeSessionFile(updatedSession);
     });
 
+    const listSessions = () => Effect.gen(function* () {
+      const directoryExists = yield* fs.exists(directory).pipe(Effect.mapError(mapStorageError));
+      if (!directoryExists) {
+        return [];
+      }
+
+      const entries = yield* fs.readDirectory(directory).pipe(Effect.mapError(mapStorageError));
+      const ids = entries
+        .filter((entry) => entry.endsWith(".json"))
+        .map((entry) => decodeURIComponent(entry.slice(0, -".json".length)));
+
+      const sessions = yield* Effect.forEach(ids, (id) => readSessionFile(id), { concurrency: 4 });
+      return sessions
+        .map(summarizeSession)
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    });
+
     return {
       getSession,
       makeSession,
-      appendMessages
+      appendMessages,
+      listSessions
     };
   }),
   layer: (directory: string) => Layer.effect(SessionRepository)(FileSessionRepository.make(directory))

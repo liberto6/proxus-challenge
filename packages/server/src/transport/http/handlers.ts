@@ -2,6 +2,7 @@ import { Effect, Layer } from "effect";
 import { HttpApiBuilder } from "effect/unstable/httpapi";
 import { ProxusApi } from "@proxus/shared";
 import { TutorChatService } from "../../domain/agents/academic-tutor/tutor-chat-service.ts";
+import { SessionRepository } from "../../domain/agents/harness/index.ts";
 import { ArtifactRepository, type Artifact } from "../../domain/artifacts/artifact.ts";
 import { MaterialRepository } from "../../domain/materials/material.ts";
 
@@ -10,10 +11,24 @@ export const TutorHttpHandlers = HttpApiBuilder.group(
   "tutor",
   Effect.fn(function* (handlers) {
     const tutor = yield* TutorChatService;
+    const sessions = yield* SessionRepository;
 
-    return handlers.handle("chat", ({ payload }) =>
-      tutor.sendMessage(payload).pipe(Effect.orDie)
-    );
+    return handlers
+      .handle("chat", ({ payload }) =>
+        tutor.sendMessage(payload).pipe(Effect.orDie)
+      )
+      .handle("createSession", () =>
+        sessions.makeSession({ id: crypto.randomUUID() }).pipe(Effect.orDie)
+      )
+      .handle("listSessions", () =>
+        sessions.listSessions().pipe(
+          Effect.map((items) => ({ sessions: items })),
+          Effect.orDie
+        )
+      )
+      .handle("getSession", ({ params }) =>
+        sessions.getSession(params.id).pipe(Effect.orDie)
+      );
   })
 );
 

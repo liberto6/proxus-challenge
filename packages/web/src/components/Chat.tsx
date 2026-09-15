@@ -1,12 +1,13 @@
 import { useAtomRefresh } from "@effect/atom-react";
 import type { AgentMessage } from "@proxus/shared";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import "streamdown/styles.css";
 import { artifactsQuery } from "../domain/artifacts/atoms.ts";
 import { materialsQuery } from "../domain/materials/atoms.ts";
 import { describeToolMessage } from "../domain/tutor/activity.ts";
 import { applyInvalidations, invalidationsForToolCall } from "../domain/tutor/invalidation.ts";
+import { createSession, loadOrCreateSession } from "../domain/tutor/session.ts";
 import { streamTutorMessage } from "../domain/tutor/stream.ts";
 
 const starterPrompts = [
@@ -22,6 +23,8 @@ interface TurnError {
 }
 
 export function Chat() {
+  const [sessionId, setSessionId] = useState<string | undefined>();
+  const [sessionState, setSessionState] = useState<"loading" | "ready" | "failed">("loading");
   const [messages, setMessages] = useState<readonly AgentMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -32,9 +35,41 @@ export function Chat() {
   const pendingInvalidations = useRef<Array<ReturnType<typeof invalidationsForToolCall>>>([]);
   const abortController = useRef<AbortController | undefined>(undefined);
 
+  useEffect(() => {
+    let cancelled = false;
+    loadOrCreateSession()
+      .then((session) => {
+        if (cancelled) return;
+        setSessionId(session.id);
+        setMessages(session.messages);
+        setSessionState("ready");
+      })
+      .catch((cause) => {
+        if (cancelled) return;
+        setSessionState("failed");
+        setError({ message: `No se pudo cargar la sesión: ${cause instanceof Error ? cause.message : String(cause)}`, input: undefined });
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const startNewSession = async () => {
+    if (isSending) return;
+    setSessionState("loading");
+    setError(undefined);
+    try {
+      const session = await createSession();
+      setSessionId(session.id);
+      setMessages([]);
+      setSessionState("ready");
+    } catch (cause) {
+      setSessionState("failed");
+      setError({ message: `No se pudo crear la sesión: ${cause instanceof Error ? cause.message : String(cause)}`, input: undefined });
+    }
+  };
+
   const submit = async (nextInput: string, history: readonly AgentMessage[] = messages) => {
     const trimmed = nextInput.trim();
-    if (trimmed.length === 0 || isSending) {
+    if (trimmed.length === 0 || isSending || sessionId === undefined) {
       return;
     }
 
@@ -51,7 +86,7 @@ export function Chat() {
     let turnFailed: TurnError | undefined;
 
     try {
-      for await (const event of streamTutorMessage({ input: trimmed, messages: historyBefore, maxSteps: 8 }, controller.signal)) {
+      for await (const event of streamTutorMessage({ sessionId, input: trimmed, maxSteps: 8 }, controller.signal)) {
         switch (event.type) {
           case "message": {
             const message = event.message;
@@ -111,16 +146,18 @@ export function Chat() {
     <main className="grid h-screen max-h-screen min-w-0 grid-rows-[auto_1fr_auto_auto] bg-slate-950 max-md:h-auto max-md:max-h-none">
       <header className="flex items-center justify-between gap-4 border-slate-800 border-b px-6 py-5">
         <div>
-          <p className="mb-1 font-bold text-sky-400 text-xs uppercase tracking-widest">Sesión en memoria</p>
+          <p className="mb-1 font-bold text-sky-400 text-xs uppercase tracking-widest">
+            {sessionState === "ready" && sessionId !== undefined ? `Sesión guardada · ${sessionId.slice(0, 8)}` : sessionState === "loading" ? "Cargando sesión…" : "Sin sesión"}
+          </p>
           <h1 className="m-0 font-bold text-3xl text-slate-100">Tutor académico</h1>
         </div>
         <button
           className="rounded-full border border-slate-700 px-4 py-2 text-slate-200 hover:border-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
           type="button"
-          onClick={() => { setMessages([]); setError(undefined); }}
-          disabled={messages.length === 0 || isSending}
+          onClick={() => void startNewSession()}
+          disabled={isSending || sessionState === "loading"}
         >
-          Limpiar chat
+          Nueva sesión
         </button>
       </header>
 
@@ -131,7 +168,7 @@ export function Chat() {
                 <h2 className="m-0 text-balance font-bold text-4xl text-slate-100 leading-tight md:text-6xl">
                   Pregunta sobre tus materiales, notas, quizzes o tests.
                 </h2>
-                <p className="mt-4 text-slate-400">La conversación vive solo en la memoria del navegador. Al recargar se pierde.</p>
+                <p className="mt-4 text-slate-400">La conversación se guarda en el servidor: puedes recargar o volver más tarde.</p>
                 <div className="mt-6 grid grid-cols-3 gap-3 max-lg:grid-cols-1">
                   {starterPrompts.map((prompt) => (
                     <button
@@ -146,14 +183,11 @@ export function Chat() {
                 </div>
               </div>
             )
-          : messages.map((message, index) => <MessageBubble key={index} message={message} />)}
+          : groupMessages(messages).map((group, index) => group.kind === "activity"
+              ? <ActivityGroup key={index} messages={group.messages} />
+              : <MessageBubble key={index} message={group.message} />)}
 
-        {isSending && (
-          <div className="flex max-w-3xl items-center gap-3 self-start rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-slate-300 text-sm" role="status">
-            <span className="inline-block size-2 animate-pulse rounded-full bg-sky-400" aria-hidden="true" />
-            <span>{progress.at(-1) ?? "El tutor está pensando…"}</span>
-          </div>
-        )}
+        {isSending && <ProgressStatus label={progress.at(-1)} />}
       </section>
 
       {error === undefined ? null : (
@@ -191,7 +225,7 @@ export function Chat() {
           }}
           placeholder="Pregunta algo a tu tutor…"
           rows={3}
-          disabled={isSending}
+          disabled={isSending || sessionState !== "ready"}
         />
         {isSending
           ? (
@@ -207,7 +241,7 @@ export function Chat() {
               <button
                 className="self-end rounded-full border border-slate-700 bg-slate-900 px-5 py-3 text-slate-100 hover:border-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
                 type="submit"
-                disabled={input.trim().length === 0}
+                disabled={input.trim().length === 0 || sessionState !== "ready"}
               >
                 Enviar
               </button>
@@ -217,20 +251,83 @@ export function Chat() {
   );
 }
 
+/** Current status while a turn runs. A "reintentando en N s" label counts down. */
+function ProgressStatus({ label }: { readonly label: string | undefined }) {
+  const [text, setText] = useState(label ?? "El tutor está pensando…");
+
+  useEffect(() => {
+    const match = label === undefined ? null : /reintentando en (\d+) s/.exec(label);
+    if (label === undefined || match === null) {
+      setText(label ?? "El tutor está pensando…");
+      return;
+    }
+
+    let remaining = Number(match[1]);
+    const render = () => setText(label.replace(/reintentando en \d+ s/, `reintentando en ${remaining} s`));
+    render();
+    const timer = window.setInterval(() => {
+      remaining = Math.max(0, remaining - 1);
+      render();
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [label]);
+
+  return (
+    <div className="flex max-w-3xl items-center gap-3 self-start rounded-2xl border border-slate-800 bg-slate-900/60 px-4 py-3 text-slate-300 text-sm" role="status">
+      <span className="inline-block size-2 animate-pulse rounded-full bg-sky-400" aria-hidden="true" />
+      <span>{text}</span>
+    </div>
+  );
+}
+
+type MessageGroup =
+  | { readonly kind: "message"; readonly message: AgentMessage }
+  | { readonly kind: "activity"; readonly messages: readonly AgentMessage[] };
+
+/** Consecutive tool calls and results collapse into one activity block per turn. */
+function groupMessages(messages: readonly AgentMessage[]): readonly MessageGroup[] {
+  const groups: MessageGroup[] = [];
+  for (const message of messages) {
+    const isTool = message.role === "tool-call" || message.role === "tool-result";
+    const last = groups.at(-1);
+    if (isTool && last?.kind === "activity") {
+      groups[groups.length - 1] = { kind: "activity", messages: [...last.messages, message] };
+    } else if (isTool) {
+      groups.push({ kind: "activity", messages: [message] });
+    } else {
+      groups.push({ kind: "message", message });
+    }
+  }
+  return groups;
+}
+
+function ActivityGroup({ messages }: { readonly messages: readonly AgentMessage[] }) {
+  const steps = messages.filter((message) => message.role === "tool-call");
+  const failed = messages.some((message) => message.role === "tool-result" && message.isFailure);
+  const summary = steps.map(describeToolMessage).join(" · ");
+  return (
+    <details className={`w-full max-w-3xl self-start rounded-xl border px-3 py-2 text-sm ${failed ? "border-amber-900 text-amber-200" : "border-slate-800 text-slate-500"}`}>
+      <summary className="cursor-pointer">
+        {steps.length} {steps.length === 1 ? "paso" : "pasos"} del tutor: {summary}
+      </summary>
+      <ol className="mt-2 flex list-none flex-col gap-1 p-0">
+        {messages.map((message, index) => (
+          <li key={index} className="text-slate-400">
+            <span aria-hidden="true">{message.role === "tool-call" ? "→ " : "← "}</span>
+            {describeToolMessage(message)}
+            <pre className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-xs text-slate-500">
+              {JSON.stringify(message.role === "tool-call" ? message.input : message.role === "tool-result" ? message.result : null, null, 2)}
+            </pre>
+          </li>
+        ))}
+      </ol>
+    </details>
+  );
+}
+
 function MessageBubble({ message }: { readonly message: AgentMessage }) {
   if (message.role === "tool-call" || message.role === "tool-result") {
-    const failed = message.role === "tool-result" && message.isFailure;
-    return (
-      <details className={`w-full max-w-3xl self-start rounded-xl border px-3 py-2 text-sm ${failed ? "border-amber-900 text-amber-200" : "border-slate-800 text-slate-400"}`}>
-        <summary className="cursor-pointer">
-          <span aria-hidden="true">{message.role === "tool-call" ? "→ " : "← "}</span>
-          {describeToolMessage(message)}
-        </summary>
-        <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap text-xs">
-          {JSON.stringify(message.role === "tool-call" ? message.input : message.result, null, 2)}
-        </pre>
-      </details>
-    );
+    return null;
   }
 
   return (

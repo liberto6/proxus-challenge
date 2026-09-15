@@ -25,6 +25,8 @@ Sin API (deterministas):
 pnpm --filter @proxus/server run eval:tutor:tool-calls
 # guardia de anclaje: el tutor solo cita páginas que ha renderizado
 pnpm --filter @proxus/server run eval:tutor:grounding
+# sesiones persistidas: historial en servidor, reintento sin duplicados
+pnpm --filter @proxus/server run eval:tutor:sessions
 ```
 
 Con API y Poppler, el eval de anclaje añade 6 casos contra el modelo real usando el PDF sintético de `packages/server/fixtures/materials` (unas 20 llamadas; con la cuota gratuita de Gemini el adapter espera y reintenta ante `429`):
