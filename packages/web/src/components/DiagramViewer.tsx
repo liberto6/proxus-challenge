@@ -224,6 +224,12 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                       <path d="M 0 0 L 10 5 L 0 10 z" fill={palette.ink} />
                     </marker>
                   </defs>
+                  {layout.bands.map((band, index) => (
+                    <g key={band.label}>
+                      <rect x={band.x} y={band.y} width={band.width} height={band.height} rx={12} fill={index % 2 === 0 ? palette.sunSoft : palette.surface2} fillOpacity={0.55} stroke={palette.inkMuted} strokeWidth={1} strokeDasharray="3 4" />
+                      <text x={band.x + band.width / 2} y={band.y + 20} textAnchor="middle" fontSize={12} fontWeight={800} fill={palette.inkMuted}>{band.label.toLocaleUpperCase()}</text>
+                    </g>
+                  ))}
                   {layout.groups.map((group) => (
                     <GroupShape
                       key={group.id}
@@ -793,12 +799,19 @@ export const readingOrder = (artifact: DiagramArtifact): readonly ReadingSection
     return node === undefined ? [] : [node];
   });
 
-  if (artifact.diagramType === "process") {
+  if (artifact.diagramType === "process" || artifact.diagramType === "timeline") {
     const path = artifact.mainPath ?? [];
     const inPath = new Set(path);
     const side = artifact.nodes.filter((node) => !inPath.has(node.id));
+    const phases = artifact.diagramType === "timeline" ? (artifact.phases ?? []) : [];
+    const steps: ReadingSection[] = phases.length > 0
+      ? phases.flatMap((phase) => {
+          const nodes = pick(path).filter((node) => node.phase === phase);
+          return nodes.length === 0 ? [] : [{ title: phase, numbered: true, nodes }];
+        })
+      : [{ title: artifact.cyclic ? "Pasos del ciclo" : "Pasos", numbered: true, nodes: pick(path) }];
     return [
-      { title: artifact.cyclic ? "Pasos del ciclo" : "Pasos", numbered: true, nodes: pick(path) },
+      ...steps,
       ...(side.length > 0 ? [{ title: "Conceptos relacionados", numbered: false, nodes: side }] : [])
     ];
   }

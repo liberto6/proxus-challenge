@@ -212,6 +212,54 @@ results.push(
   })) && groupedMapLayout.groups.flatMap((group) => groupedMapLayout.nodes.filter((box) => !group.nodeIds.includes(box.id) && envelopeContains(group, box))).length === 0, groupedMapLayout.groups.map((group) => `${group.id}: ${group.width}x${group.height}`).join(" "))
 );
 
+// Timeline: steps on one axis, bands covering exactly their steps, side concepts above and below.
+const timelineArtifact: DiagramArtifact = {
+  kind: "diagram",
+  id: "timeline",
+  title: "Evolución",
+  diagramType: "timeline",
+  summary: "Tres etapas de una idea con sus actores.",
+  source: { materialId: "ciclo-del-agua", pages: [2, 3] },
+  phases: ["Inicio", "Desarrollo", "Actualidad"],
+  nodes: [
+    { ...node("e1", "Etapa 1", [2]), phase: "Inicio" },
+    { ...node("e2", "Etapa 2", [2]), phase: "Desarrollo" },
+    { ...node("e3", "Etapa 3", [2]), phase: "Desarrollo" },
+    { ...node("e4", "Etapa 4", [3]), phase: "Actualidad" },
+    node("a1", "Actor 1", [2]),
+    node("a2", "Actor 2", [2]),
+    node("a3", "Actor 3", [3])
+  ],
+  mainPath: ["e1", "e2", "e3", "e4"],
+  edges: [
+    { from: "e1", to: "e2", label: "cambia porque" },
+    { from: "e2", to: "e3", label: "se amplía" },
+    { from: "e3", to: "e4", label: "se mide" },
+    { from: "a1", to: "e2", label: "impulsa" },
+    { from: "a2", to: "e2", label: "frena" },
+    { from: "a3", to: "e4", label: "usa" }
+  ]
+};
+const timelineLayout = layoutDiagram(timelineArtifact);
+const timelineSteps = timelineLayout.nodes.filter((box) => box.role === "step");
+const bandOf = (id: string) => timelineLayout.bands.find((band) => {
+  const box = timelineLayout.nodes.find((candidate) => candidate.id === id)!;
+  return box.x >= band.x && box.x + box.width <= band.x + band.width;
+});
+results.push(
+  criterion("timeline.all-nodes-placed", timelineLayout.nodes.length === 7 && overlaps(timelineLayout).length === 0 && inside(timelineLayout), `${timelineLayout.width}x${timelineLayout.height}`),
+  criterion("timeline.steps-on-one-axis-left-to-right", timelineSteps.every((box) => box.y === timelineSteps[0]!.y) && timelineSteps.every((box, index) => index === 0 || box.x > timelineSteps[index - 1]!.x), `y: ${timelineSteps.map((box) => box.y).join(",")}`),
+  criterion("timeline.bands-cover-their-steps", timelineLayout.bands.length === 3 && bandOf("e1")?.label === "Inicio" && bandOf("e2")?.label === "Desarrollo" && bandOf("e3")?.label === "Desarrollo" && bandOf("e4")?.label === "Actualidad" && timelineLayout.bands.every((a, i) => timelineLayout.bands.every((b, j) => i >= j || a.x + a.width <= b.x)), timelineLayout.bands.map((band) => `${band.label}@${band.x}+${band.width}`).join(" ")),
+  criterion("timeline.side-nodes-alternate", (() => {
+    const e2 = timelineLayout.nodes.find((box) => box.id === "e2")!;
+    const a1 = timelineLayout.nodes.find((box) => box.id === "a1")!;
+    const a2 = timelineLayout.nodes.find((box) => box.id === "a2")!;
+    return a1.y < e2.y && a2.y > e2.y && a1.x === e2.x && a2.x === e2.x;
+  })(), "first above, second below"),
+  criterion("timeline.transitions-labelled-on-axis", timelineLayout.edges.filter((edge) => edge.kind === "main").length === 3 && timelineLayout.edges.filter((edge) => edge.kind === "main").every((edge) => edge.label !== undefined && edge.labelY < timelineSteps[0]!.y + 36), "three labelled stretches"),
+  criterion("timeline.deterministic", JSON.stringify(layoutDiagram(timelineArtifact)) === JSON.stringify(timelineLayout), "same output twice")
+);
+
 const mermaid = toMermaid(cycle);
 results.push(
   criterion("mermaid-export-counts", mermaid.startsWith("flowchart TD") && (mermaid.match(/-->/g) ?? []).length === 6 && mermaidEdgeCount(cycle) === 6 && mermaid.includes("recoleccion --> evaporacion") && mermaid.includes('-- "aporta vapor" -->'), `${(mermaid.match(/-->/g) ?? []).length} arrows`)

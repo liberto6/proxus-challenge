@@ -58,13 +58,27 @@ export interface LayoutGroup {
   readonly height: number;
 }
 
+/** Background band of a timeline phase, spanning its steps from top to bottom. */
+export interface LayoutBand {
+  readonly label: string;
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 export interface DiagramLayout {
   readonly nodes: readonly LayoutNode[];
   readonly edges: readonly LayoutEdge[];
   readonly groups: readonly LayoutGroup[];
+  readonly bands: readonly LayoutBand[];
   readonly width: number;
   readonly height: number;
 }
+
+const BAND_TITLE = 30;
+/** Room between two steps of a timeline for the cause written over the arrow. */
+const TIMELINE_GAP = 170;
 
 const GROUP_PADDING = 18;
 const GROUP_TITLE = 22;
@@ -91,8 +105,9 @@ export const layoutDiagram = (artifact: DiagramArtifact): DiagramLayout => {
   const ids = new Set(artifact.nodes.map((node) => node.id));
   const edges = artifact.edges.filter((edge) => ids.has(edge.from) && ids.has(edge.to) && edge.from !== edge.to);
 
-  if (artifact.diagramType === "process") {
+  if (artifact.diagramType === "process" || artifact.diagramType === "timeline") {
     const path = (artifact.mainPath ?? []).filter((id, index, all) => ids.has(id) && all.indexOf(id) === index);
+    if (artifact.diagramType === "timeline") return timeline(artifact, path, edges);
     return artifact.cyclic === true && path.length >= 3
       ? ring(artifact, path, edges)
       : column(artifact, path, edges);
@@ -258,6 +273,80 @@ export const splitTransitions = (
     }
   }
   return { transitions, edges: rest };
+};
+
+// --- Timeline ------------------------------------------------------------------------
+
+/**
+ * Steps left to right on one axis; each phase is a band behind its steps;
+ * side concepts alternate above and below the step they feed.
+ */
+const timeline = (artifact: DiagramArtifact, path: readonly string[], allEdges: DiagramArtifact["edges"]): DiagramLayout => {
+  const { transitions, edges } = splitTransitions(path, false, allEdges);
+  const placed: Placed[] = path.map((id, index) => ({
+    id,
+    cx: index * (NODE_WIDTH + TIMELINE_GAP),
+    cy: 0,
+    role: "step",
+    step: index + 1
+  }));
+  const inPath = new Set(path);
+  const sideTargets = sideNodeTargets(artifact, path, edges);
+  const perStep = new Map<string, string[]>();
+  const loose: string[] = [];
+  for (const node of artifact.nodes) {
+    if (inPath.has(node.id)) continue;
+    const target = sideTargets.get(node.id);
+    if (target === undefined) loose.push(node.id);
+    else perStep.set(target, [...(perStep.get(target) ?? []), node.id]);
+  }
+  for (const [target, sides] of perStep) {
+    const stepX = placed.find((node) => node.id === target)?.cx ?? 0;
+    sides.forEach((id, index) => {
+      // First above, then below, then further above, and so on.
+      const level = Math.floor(index / 2) + 1;
+      const sign = index % 2 === 0 ? -1 : 1;
+      placed.push({ id, cx: stepX, cy: sign * level * (NODE_HEIGHT + ROW_GAP), role: "side" });
+    });
+  }
+  const below = Math.max(1, ...[...perStep.values()].map((sides) => Math.floor((sides.length - 1) / 2) + 1)) + 1;
+  loose.forEach((id, index) => {
+    placed.push({ id, cx: index * (NODE_WIDTH + TIMELINE_GAP), cy: below * (NODE_HEIGHT + ROW_GAP), role: "side" });
+  });
+
+  const frame = normalize(placed, BAND_TITLE);
+  const rects = new Map(frame.nodes.map((node) => [node.id, node]));
+  const layoutEdges: LayoutEdge[] = [];
+  for (let index = 0; index < path.length - 1; index++) {
+    const from = rects.get(path[index]!)!;
+    const to = rects.get(path[index + 1]!)!;
+    const start = { x: from.x + from.width, y: from.y + from.height / 2 };
+    const end = { x: to.x, y: to.y + to.height / 2 };
+    const label = transitions.get(`${from.id}->${to.id}`);
+    layoutEdges.push({
+      id: `main-${index}`,
+      from: from.id,
+      to: to.id,
+      kind: "main",
+      path: line(start, end),
+      ...(label === undefined ? {} : { label }),
+      labelX: round((start.x + end.x) / 2),
+      labelY: round(start.y - 14)
+    });
+  }
+  layoutEdges.push(...straightEdges(edges, rects, "side"));
+
+  // Phase bands: from the first step of the phase to the last, full height.
+  const phaseOf = new Map(artifact.nodes.map((node) => [node.id, node.phase]));
+  const bands: LayoutBand[] = (artifact.phases ?? []).flatMap((phase) => {
+    const steps = path.map((id) => rects.get(id)!).filter((box) => phaseOf.get(box.id) === phase);
+    if (steps.length === 0) return [];
+    const x = Math.min(...steps.map((box) => box.x)) - TIMELINE_GAP / 2 + 6;
+    const right = Math.max(...steps.map((box) => box.x + box.width)) + TIMELINE_GAP / 2 - 6;
+    return [{ label: phase, x: round(x), y: 8, width: round(right - x), height: round(frame.height - 16) }];
+  });
+
+  return finish(artifact, frame, layoutEdges, bands);
 };
 
 /** For each side concept, the step it connects to (first edge touching a step wins). */
@@ -447,7 +536,7 @@ const groupEnvelopes = (artifact: DiagramArtifact, nodes: readonly LayoutNode[])
 };
 
 /** Assembles the layout and grows the frame so group envelopes stay inside it. */
-const finish = (artifact: DiagramArtifact, frame: ReturnType<typeof normalize>, edges: readonly LayoutEdge[]): DiagramLayout => {
+const finish = (artifact: DiagramArtifact, frame: ReturnType<typeof normalize>, edges: readonly LayoutEdge[], bands: readonly LayoutBand[] = []): DiagramLayout => {
   const groups = groupEnvelopes(artifact, frame.nodes);
   const shiftX = Math.max(0, ...groups.map((group) => PADDING - group.x));
   const shiftY = Math.max(0, ...groups.map((group) => PADDING - group.y));
@@ -456,7 +545,8 @@ const finish = (artifact: DiagramArtifact, frame: ReturnType<typeof normalize>, 
   const movedEdges = shiftX === 0 && shiftY === 0 ? edges : edges.map((edge) => ({ ...edge, path: shiftPath(edge.path, shiftX, shiftY), labelX: round(edge.labelX + shiftX), labelY: round(edge.labelY + shiftY) }));
   const width = Math.max(frame.width + shiftX, ...shifted.map((group) => group.x + group.width + PADDING));
   const height = Math.max(frame.height + shiftY, ...shifted.map((group) => group.y + group.height + PADDING));
-  return { nodes, edges: movedEdges, groups: shifted, width: round(width), height: round(height) };
+  const movedBands = bands.map((band) => ({ ...band, x: round(band.x + shiftX), height: round(Math.max(band.height, height - 16)) }));
+  return { nodes, edges: movedEdges, groups: shifted, bands: movedBands, width: round(width), height: round(height) };
 };
 
 /** Moves every absolute coordinate pair of a path (M, L, Q control/end points, A end point). Arc radii are untouched. */
@@ -473,13 +563,13 @@ const shiftPath = (path: string, dx: number, dy: number): string =>
 // --- Shared geometry -----------------------------------------------------------------
 
 /** Shifts centres so every box sits inside the frame with padding; returns boxes and the shift applied. */
-const normalize = (placed: readonly Placed[]) => {
+const normalize = (placed: readonly Placed[], topInset = 0) => {
   const minX = Math.min(...placed.map((node) => node.cx - NODE_WIDTH / 2));
   const minY = Math.min(...placed.map((node) => node.cy - NODE_HEIGHT / 2));
   const maxX = Math.max(...placed.map((node) => node.cx + NODE_WIDTH / 2));
   const maxY = Math.max(...placed.map((node) => node.cy + NODE_HEIGHT / 2));
   const offsetX = PADDING - minX;
-  const offsetY = PADDING - minY;
+  const offsetY = PADDING + topInset - minY;
   const nodes: LayoutNode[] = placed.map((node) => ({
     id: node.id,
     x: round(node.cx - NODE_WIDTH / 2 + offsetX),
@@ -494,7 +584,7 @@ const normalize = (placed: readonly Placed[]) => {
     offsetX,
     offsetY,
     width: round(maxX - minX + PADDING * 2),
-    height: round(maxY - minY + PADDING * 2)
+    height: round(maxY - minY + PADDING * 2 + topInset)
   };
 };
 
