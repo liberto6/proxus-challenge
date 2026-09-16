@@ -115,7 +115,8 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
    - resuélvelo, revisa las correcciones y pregúntale al tutor por una pregunta con el quiz abierto,
    - pide que te explique las fases del ciclo: el tutor decide dibujar un esquema; ábrelo, toca un concepto, salta a la página que lo explica y pregúntale por él,
    - di «quiero explicártelo yo»: el tutor fija los puntos clave que debes cubrir (sin mostrarte la solución); en el panel, graba (dictado simulado en este prototipo) o escribe tu explicación y corrígela: cada punto queda cubierto, a medias, falta o incorrecto, con lo esperado en los que no cubriste y la página que lo explica; pregúntale al tutor por un punto y repite,
-   - recarga la página: la carpeta y la conversación se conservan; las conversaciones de la carpeta se listan y se reabren desde la barra.
+   - recarga la página: la carpeta y la conversación se conservan; las conversaciones de la carpeta se listan y se reabren desde la barra,
+   - edita la carpeta (lápiz) y elige su asignatura (universidad → grado → asignatura): aparece la sección «Tutorías» con compañeros de tu grado; tras fallar un quiz, el panel te ofrece «que te lo explique alguien de tu grado»; abre un perfil, reserva una franja con puntos, márcala como realizada y deja una reseña (prototipo: datos de ejemplo, reservas solo en este navegador).
 6. Si necesitas más detalle sobre storage local, sigue [`docs/data.md`](./docs/data.md); no subas `.data`.
 7. Las decisiones que explican el diseño actual están en [`docs/decisions.md`](./docs/decisions.md).
 8. Antes de entregar cambios, ejecuta [`docs/testing.md`](./docs/testing.md).
@@ -127,6 +128,7 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 - La corrección de respuesta corta compara texto normalizado, no significado.
 - Los objetivos de explicación se corrigen por cobertura de ideas (palabras sin acentos, con plurales y los sinónimos que declara el tutor), no por significado: una buena paráfrasis que no use ninguna de las formas declaradas sale como «falta». Un juez con rúbrica queda como siguiente paso; esta corrección sería su respaldo.
 - El dictado es simulado: el micro reproduce una muestra generada en el servidor a partir de las soluciones (buena / a medias / floja) en lugar de reconocer la voz. El hook tiene la interfaz que tendría uno real; el endpoint de muestras es de demostración y expone las soluciones a quien lo llame.
+- Las tutorías entre alumnos son un prototipo de producto: la asignatura de la carpeta es real (contrato y servidor), pero los tutores, franjas y reseñas son datos de ejemplo generados por asignatura, y las reservas, los puntos y las reseñas escritas se guardan en `localStorage`. No hay usuarios, pagos, videollamada ni lado «dar tutorías».
 - La ruta de streaming del chat es manual (fuera de Effect HTTP API), como en la base original.
 - Con la cuota gratuita de Gemini, un turno con lectura de páginas consume 3 o 4 peticiones; ante cuota diaria agotada el tutor lo dice y no reintenta.
 - Sin multiusuario: carpetas, sesiones, materiales y artefactos son ficheros locales sin propietario.
