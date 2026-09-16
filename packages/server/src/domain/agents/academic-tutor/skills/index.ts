@@ -1,6 +1,6 @@
 export { UseUploadedMaterialsSkill } from "./use-uploaded-materials.ts";
 export { CreateStudyArtifactsSkill } from "./create-study-artifacts.ts";
-export { TeachVisuallySkill, makeTeachVisuallySkill, type TeachVisuallyOptions } from "./teach-visually.ts";
+export { TeachVisuallySkill, makeTeachVisuallySkill, teachVisuallyExamples, type TeachVisuallyOptions } from "./teach-visually.ts";
 
 import { UseUploadedMaterialsSkill } from "./use-uploaded-materials.ts";
 import { CreateStudyArtifactsSkill } from "./create-study-artifacts.ts";

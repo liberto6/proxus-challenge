@@ -7,7 +7,7 @@ import { progressLabelFor } from "../domain/agents/harness/event.ts";
 import { academicTutorSystemPrompt } from "../domain/agents/academic-tutor.ts";
 import { makeArtifactCommands } from "../domain/agents/academic-tutor/artifact-commands.ts";
 import { makeMaterialCommands } from "../domain/agents/academic-tutor/material-commands.ts";
-import { makeAcademicTutorSkills } from "../domain/agents/academic-tutor/skills/index.ts";
+import { makeAcademicTutorSkills, teachVisuallyExamples } from "../domain/agents/academic-tutor/skills/index.ts";
 import { describeUiContext } from "../domain/agents/academic-tutor/ui-context.ts";
 import { normalizeDiagramInput, validateDiagram, type DiagramIssueCode, type DiagramValidationContext } from "../domain/artifacts/diagram.ts";
 import {
@@ -494,6 +494,18 @@ const plumbingCases = Effect.sync(() => {
     criterion("skill-lists-when-not-to-draw", auto !== undefined && auto.content.includes("## When it does not") && auto.content.includes("Lists of dates") && auto.content.includes("DIAGRAM_INVALID"), "skill has the rubric and the repair rule"),
     criterion("skill-respects-auto-flag", auto !== undefined && manual !== undefined && auto.content.includes("On your own initiative") && !manual.content.includes("On your own initiative"), "auto flag toggles the initiative section"),
     criterion("skill-examples-have-no-single-quotes", auto !== undefined && !/'\{[^\n]*'[^\n]*'/.test(auto.content.split("Examples")[1]?.split("## If")[0] ?? "'x'x'"), "examples fit inside single quotes")
+  );
+
+  // The examples the skill quotes must be diagrams the system accepts.
+  const exampleIssues = Object.entries(teachVisuallyExamples).map(([name, value]) => {
+    const input = JSON.parse(JSON.stringify(value).replaceAll("<materialId>", materialId)) as CreateDiagramArtifactInput;
+    return `${name}: ${codes(input, { pageCount: 9, renderedPages: new Set([1, 2, 3, 4, 5]) }).join(",") || "ok"}`;
+  });
+  results.push(
+    criterion("skill-examples-validate", exampleIssues.every((line) => line.endsWith(": ok")), exampleIssues.join(" | ")),
+    criterion("skill-forbids-outline", auto !== undefined && auto.content.includes("Draw the knowledge, not the document") && auto.content.includes("Never section titles"), "outline rule present"),
+    criterion("skill-mentions-cards", auto !== undefined && auto.content.includes("`cards`") && auto.content.includes("Fechas") && auto.content.includes("go into `cards`"), "cards rule present"),
+    criterion("skill-explains-transitions", auto !== undefined && auto.content.includes("cause of the transition"), "transition rule present")
   );
 
   results.push(criterion("progress-label-diagram", progressLabelFor("cli", { input: `artifacts create '{"kind":"diagram","title":"x"}'` }) === "Dibujando un esquema", progressLabelFor("cli", { input: `artifacts create '{"kind":"diagram"}'` })));
