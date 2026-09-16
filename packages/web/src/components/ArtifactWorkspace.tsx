@@ -11,18 +11,25 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactQuery, submitArtifactAttemptAction } from "../domain/artifacts/atoms.ts";
-import { materialPageKey, materialPageQuery, materialsQuery } from "../domain/materials/atoms.ts";
-import { formatPages, pluralize } from "../lib/format.ts";
+import { pluralize } from "../lib/format.ts";
 import { DiagramViewer, type PageSource } from "./DiagramViewer.tsx";
+import { ExplainWorkspace } from "./ExplainWorkspace.tsx";
 import { Icon, KindIcon, kindLabel } from "./icons.tsx";
+import { ArtifactProvenance, PagePreview, ScoreSummary, useMaterialAvailable } from "./workspace-parts.tsx";
 
 type Answers = Record<string, string>;
+
+/** What the question sent to the tutor is about: a diagram node, or a quiz question / explanation key point. */
+export interface AskTutorContext {
+  readonly nodeId?: string;
+  readonly questionId?: string;
+}
 
 interface ArtifactWorkspaceProps {
   readonly artifactId: string;
   readonly onClose: () => void;
-  /** Sends a question about the open artifact (and optionally one of its nodes) to the tutor chat. */
-  readonly onAskTutor: (text: string, context?: { readonly nodeId: string }) => void;
+  /** Sends a question about the open artifact (and optionally one of its parts) to the tutor chat. */
+  readonly onAskTutor: (text: string, context?: AskTutorContext) => void;
 }
 
 export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactWorkspaceProps) {
@@ -48,7 +55,7 @@ export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactW
               : value.kind === "diagram"
                 ? <DiagramPanel key={value.id} artifact={value} onAskTutor={onAskTutor} />
                 : value.kind === "explain"
-                  ? <ExplainPlaceholder key={value.id} artifact={value} />
+                  ? <ExplainWorkspace key={value.id} artifact={value} onAskTutor={onAskTutor} />
                   : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} />}
           </>
         )
@@ -83,23 +90,6 @@ function WorkspaceError({ message, onClose, onRetry }: { readonly message: strin
   );
 }
 
-/** "Basado en Ciclo del agua · pág. 1-2", resolving the material title from the list. */
-function ArtifactProvenance({ artifact }: { readonly artifact: Artifact }) {
-  const materials = useAtomValue(materialsQuery);
-  if (artifact.source === undefined) {
-    return null;
-  }
-  const title = AsyncResult.isSuccess(materials)
-    ? materials.value.materials.find((material) => material.id === artifact.source?.materialId)?.title
-    : undefined;
-  const pages = formatPages(artifact.source.pages);
-  return (
-    <span>
-      Basado en {title ?? artifact.source.materialId}{pages !== undefined ? ` · ${pages}` : ""}
-    </span>
-  );
-}
-
 function NoteViewer({ artifact }: { readonly artifact: Extract<Artifact, { readonly kind: "note" }> }) {
   return (
     <div className="min-h-0 overflow-y-auto p-5">
@@ -117,41 +107,20 @@ function NoteViewer({ artifact }: { readonly artifact: Extract<Artifact, { reado
   );
 }
 
-/** Until the explanation workspace lands: the objective's prompt and its key points. */
-function ExplainPlaceholder({ artifact }: { readonly artifact: Extract<Artifact, { readonly kind: "explain" }> }) {
-  return (
-    <div className="min-h-0 overflow-y-auto p-5">
-      <div className="mb-3 flex flex-wrap items-center gap-2 font-bold text-ink-muted text-sm">
-        <span className="badge badge-lila">{kindLabel.explain}</span>
-        <ArtifactProvenance artifact={artifact} />
-        <span>· {pluralize(artifact.keyPoints.length, "punto clave", "puntos clave")}</span>
-      </div>
-      <article className="card p-5">
-        <p className="mb-3 font-display font-semibold text-xl leading-tight">{artifact.prompt}</p>
-        <ol className="flex flex-col gap-1.5 pl-5 font-semibold text-ink-muted text-sm" style={{ listStyle: "decimal" }}>
-          {artifact.keyPoints.map((point) => <li key={point.id}>{point.label}</li>)}
-        </ol>
-      </article>
-    </div>
-  );
-}
-
 function DiagramPanel({ artifact, onAskTutor }: {
   readonly artifact: Extract<Artifact, { readonly kind: "diagram" }>;
-  readonly onAskTutor: (text: string, context?: { readonly nodeId: string }) => void;
+  readonly onAskTutor: (text: string, context?: AskTutorContext) => void;
 }) {
-  const materials = useAtomValue(materialsQuery);
   const [preview, setPreview] = useState<{ readonly page: number; readonly source: PageSource } | undefined>();
   const [expanded, setExpanded] = useState(false);
   // A question for the tutor lives in the chat, so the full-screen view closes first.
-  const ask = (text: string, context?: { readonly nodeId: string }) => {
+  const ask = (text: string, context?: AskTutorContext) => {
     setExpanded(false);
     onAskTutor(text, context);
   };
   const materialId = artifact.source?.materialId;
   // Pages can be previewed while the source material still exists.
-  const materialAvailable = materialId !== undefined
-    && (!AsyncResult.isSuccess(materials) || materials.value.materials.some((material) => material.id === materialId));
+  const materialAvailable = useMaterialAvailable(materialId);
   const openPage = materialAvailable
     ? (page: number, source: PageSource) => setPreview((current) => current?.page === page && current.source.label === source.label ? undefined : { page, source })
     : undefined;
@@ -176,7 +145,7 @@ function DiagramPanel({ artifact, onAskTutor }: {
               <PagePreview
                 materialId={materialId}
                 page={preview.page}
-                nodeLabel={preview.source.label}
+                label={preview.source.label}
                 onClose={() => setPreview(undefined)}
                 onAsk={() => ask(
                   `¿Qué dice la página ${preview.page} sobre «${preview.source.label}»?`,
@@ -186,50 +155,6 @@ function DiagramPanel({ artifact, onAskTutor }: {
             )
           : undefined}
       />
-    </div>
-  );
-}
-
-/** A rendered page of the material, opened from a node's page chip. */
-function PagePreview({ materialId, page, nodeLabel, onClose, onAsk }: {
-  readonly materialId: string;
-  readonly page: number;
-  readonly nodeLabel: string;
-  readonly onClose: () => void;
-  readonly onAsk: () => void;
-}) {
-  const result = useAtomValue(materialPageQuery(materialPageKey(materialId, page)));
-  const refresh = useAtomRefresh(materialPageQuery(materialPageKey(materialId, page)));
-  return (
-    <section className="card flex flex-col gap-2.5 p-4" aria-label={`Página ${page} del material`} aria-live="polite">
-      <div className="flex items-center justify-between gap-2">
-        <h4 className="font-display font-semibold text-base leading-tight">Página {page} · {nodeLabel}</h4>
-        <div className="flex items-center gap-1.5">
-          <button className="btn btn-secondary btn-sm" type="button" onClick={onAsk}><Icon name="spark" size={14} /> Preguntar por esta página</button>
-          <button className="icon-btn text-ink" type="button" onClick={onClose} aria-label="Cerrar la vista previa"><Icon name="close" size={14} strokeWidth={2.4} /></button>
-        </div>
-      </div>
-      {AsyncResult.matchWithError(result, {
-        onInitial: () => <div className="h-48 animate-pulse rounded-sm bg-surface-3" aria-busy="true" />,
-        onError: (cause) => <PreviewError message={String(cause)} onRetry={refresh} />,
-        onDefect: (cause) => <PreviewError message={String(cause)} onRetry={refresh} />,
-        onSuccess: ({ value }) => (
-          <img
-            className="w-full rounded-sm border-2 border-line"
-            src={value.data}
-            alt={`Página ${value.page} de ${value.pageCount} del material`}
-          />
-        )
-      })}
-    </section>
-  );
-}
-
-function PreviewError({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) {
-  return (
-    <div className="flex flex-col gap-2 rounded-md border-2 border-rosa bg-rosa-soft p-3 text-rosa-ink text-sm" role="alert">
-      <span className="font-semibold break-words">No se pudo cargar la página: {message}</span>
-      <button className="btn btn-secondary btn-sm self-start" type="button" onClick={onRetry}>Reintentar</button>
     </div>
   );
 }
@@ -497,49 +422,18 @@ function ChoiceList({ name, options, value, disabled, correctId, onChange, colum
   );
 }
 
-const scoreTone = (ratio: number): { text: string; ring: string; title: string } =>
-  ratio >= 1
-    ? { text: "text-mint-ink", ring: "#2fbf8a", title: "¡Perfecto!" }
-    : ratio >= 0.7
-      ? { text: "text-mint-ink", ring: "#2fbf8a", title: "¡Buen intento!" }
-      : ratio >= 0.4
-        ? { text: "text-sun-ink", ring: "#ffc94d", title: "Vas por buen camino" }
-        : { text: "text-rosa-ink", ring: "#f04e6e", title: "Toca repasar" };
-
 function AttemptSummary({ attempt, failedIndexes, onRetry }: {
-  readonly attempt: Extract<ArtifactAttempt, { readonly status: "graded" }>;
+  readonly attempt: Extract<ArtifactAttempt, { readonly status: "graded"; readonly artifactKind: "quiz" | "test" }>;
   readonly failedIndexes: ReadonlyArray<number>;
   readonly onRetry: () => void;
 }) {
-  const ratio = attempt.maxScore === 0 ? 0 : attempt.score / attempt.maxScore;
-  const tone = scoreTone(ratio);
-  const percent = Math.round(ratio * 100);
   const advice = failedIndexes.length === 0
     ? "Todo correcto. Si quieres, pídeme un test más difícil."
     : failedIndexes.length === 1
       ? `Has fallado la pregunta ${failedIndexes[0]}. Pídeme que te la explique.`
       : `Has fallado las preguntas ${listIndexes(failedIndexes)}. Pídeme que te las explique.`;
 
-  return (
-    <section className="card relative flex items-center gap-4 overflow-hidden p-4 shadow-hard-lg" role="status" aria-live="polite">
-      {ratio >= 0.7 && (
-        <>
-          <span className="confetti" style={{ width: 8, height: 8, background: "#ff6b4a", top: 10, right: 60, transform: "rotate(20deg)" }} />
-          <span className="confetti" style={{ width: 6, height: 10, background: "#ffc94d", top: 26, right: 34, transform: "rotate(-30deg)" }} />
-          <span className="confetti" style={{ width: 7, height: 7, background: "#8b7cf6", bottom: 14, right: 80, transform: "rotate(45deg)" }} />
-          <span className="confetti" style={{ width: 5, height: 9, background: "#2fbf8a", bottom: 22, right: 18, transform: "rotate(15deg)" }} />
-        </>
-      )}
-      <div className="ring" style={{ background: `conic-gradient(${tone.ring} 0 ${percent}%, #f6eedf ${percent}% 100%)` }} aria-hidden="true">
-        <div><span className={tone.text}>{attempt.score}</span><span className="text-ink-subtle text-[13px]">/{attempt.maxScore}</span></div>
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="font-display font-semibold text-xl leading-tight">{tone.title}</p>
-        <p className="font-semibold text-ink-muted text-sm">{advice}</p>
-      </div>
-      <button className="btn btn-secondary btn-sm shrink-0" type="button" onClick={onRetry}>Repetir</button>
-    </section>
-  );
+  return <ScoreSummary score={attempt.score} maxScore={attempt.maxScore} advice={advice} onRetry={onRetry} />;
 }
 
 function CorrectionBadge({ correction }: { readonly correction: QuestionCorrection }) {

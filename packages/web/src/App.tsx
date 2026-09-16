@@ -2,7 +2,7 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { folderOf, generalFolderId, type AgentSession } from "@proxus/shared";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { ArtifactWorkspace } from "./components/ArtifactWorkspace.tsx";
+import { ArtifactWorkspace, type AskTutorContext } from "./components/ArtifactWorkspace.tsx";
 import { Chat, type ChatPrefill, type ChatSession } from "./components/Chat.tsx";
 import { FolderSwitcher } from "./components/FolderSwitcher.tsx";
 import { Icon } from "./components/icons.tsx";
@@ -157,8 +157,8 @@ export function App() {
     setMaterialsOpen(false);
   };
   const closeArtifact = () => setSelectedArtifactId(null);
-  const askTutor = (text: string, context?: { readonly nodeId: string }) => {
-    setPrefill({ text, nonce: Date.now(), ...(context === undefined ? {} : { nodeId: context.nodeId }) });
+  const askTutor = (text: string, context?: AskTutorContext) => {
+    setPrefill({ text, nonce: Date.now(), ...context });
     if (layout === "mobile") setMobileTab("chat");
     if (layout === "compact") setSelectedArtifactId(null);
   };

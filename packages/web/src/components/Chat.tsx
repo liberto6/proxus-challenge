@@ -30,6 +30,8 @@ export interface ChatPrefill {
   readonly nonce: number;
   /** Diagram node the question is about; sent as UI context with the next turn. */
   readonly nodeId?: string;
+  /** Quiz question or explanation key point the question is about; sent as `openQuestionId`. */
+  readonly questionId?: string;
 }
 
 /** The conversation the chat shows; the app owns it (folder, creation, switching). */
@@ -64,6 +66,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
   const [progress, setProgress] = useState<readonly string[]>([]);
   const [error, setError] = useState<TurnError | undefined>();
   const [focusedNodeId, setFocusedNodeId] = useState<string | undefined>();
+  const [focusedQuestionId, setFocusedQuestionId] = useState<string | undefined>();
   const refreshArtifacts = useAtomRefresh(artifactsQuery);
   const refreshMaterials = useAtomRefresh(materialsQuery);
   const refreshSessions = useAtomRefresh(sessionsQuery);
@@ -122,6 +125,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
     if (prefill === undefined) return;
     setInput(prefill.text);
     setFocusedNodeId(prefill.nodeId);
+    setFocusedQuestionId(prefill.questionId);
     textarea.current?.focus();
   }, [prefill]);
 
@@ -150,7 +154,11 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
     try {
       const context = selectedArtifactId === null
         ? undefined
-        : { openArtifactId: selectedArtifactId, ...(focusedNodeId === undefined ? {} : { openNodeId: focusedNodeId }) };
+        : {
+            openArtifactId: selectedArtifactId,
+            ...(focusedNodeId === undefined ? {} : { openNodeId: focusedNodeId }),
+            ...(focusedQuestionId === undefined ? {} : { openQuestionId: focusedQuestionId })
+          };
       for await (const event of streamTutorMessage({ sessionId, input: trimmed, maxSteps: 8, ...(context === undefined ? {} : { context }) }, controller.signal)) {
         switch (event.type) {
           case "message": {
@@ -185,6 +193,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
       if (turnFailed === undefined) {
         setInput("");
         setFocusedNodeId(undefined);
+        setFocusedQuestionId(undefined);
         // The conversation list shows the first message and the last activity.
         refreshSessions();
       } else {
