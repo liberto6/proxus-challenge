@@ -95,7 +95,7 @@ No commitees `packages/server/.data`. Si una mejora necesita contenido de ejempl
 1. Añadir fixtures públicos/sintéticos fuera de `.data`, por ejemplo:
 
    ```txt
-   packages/server/fixtures/materials/demo.pdf
+   packages/server/fixtures/materials/demo.pdf        # los evals usan materials/ciclo-del-agua.pdf y materials-timeline/la-bicicleta.pdf, ambos sintéticos
    packages/server/fixtures/artifacts/*.json
    ```
 

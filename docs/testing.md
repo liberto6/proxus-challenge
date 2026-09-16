@@ -31,7 +31,7 @@ pnpm --filter @proxus/server run eval:tutor:sessions
 pnpm --filter @proxus/server run eval:materials
 # diagramas: validación, normalización, bucle de reparación con modelo simulado, skill y contexto
 pnpm --filter @proxus/server run eval:tutor:diagram
-# layout del esquema en la web: nodos colocados sin solapes, anillo para ciclos, determinismo, exportación Mermaid
+# layout del esquema en la web: nodos sin solapes, anillo para ciclos, causas sobre el camino, grupos, línea de tiempo, determinismo, exportación Mermaid
 pnpm --filter @proxus/web run check:layout
 ```
 
@@ -44,7 +44,7 @@ GROUNDING_LIVE=1 pnpm --filter @proxus/server run eval:tutor:grounding
 # ver la respuesta cruda de Gemini: GEMINI_DEBUG=1
 ```
 
-El eval de diagramas añade con `DIAGRAM_LIVE=1` seis casos contra el modelo real (unas 20-25 llamadas): dibuja a petición y por iniciativa propia un proceso de las páginas 1-2, no dibuja una definición suelta ni una lista de fechas, dibuja un mapa conceptual a petición y no inventa material. Cada caso comprueba tipo, cobertura de conceptos del fixture, páginas dentro del rango y leídas, y como mucho dos intentos de creación. Subconjuntos con `DIAGRAM_CASES=D1,D3`.
+El eval de diagramas añade con `DIAGRAM_LIVE=1` siete casos contra el modelo real (unas 25-30 llamadas), con los dos PDF sintéticos de `packages/server/fixtures` (`materials/ciclo-del-agua.pdf` y `materials-timeline/la-bicicleta.pdf`): dibuja a petición y por iniciativa propia un proceso de las páginas 1-2, no dibuja una definición suelta, manda las fechas a una tarjeta, dibuja un mapa conceptual con tarjeta de definiciones, no inventa material y dibuja una línea de tiempo con fases. Cada caso comprueba tipo, cobertura de conceptos del fixture, páginas dentro del rango y leídas, como mucho dos intentos de creación, y anota cuánto contenido puso el modelo (subetiquetas propias, causas en el camino, tarjetas, grupos, vistas). Subconjuntos con `DIAGRAM_CASES=D1,D3`.
 
 ```bash
 DIAGRAM_LIVE=1 pnpm --filter @proxus/server run eval:tutor:diagram
@@ -67,7 +67,7 @@ Con un PDF de prueba (`packages/server/fixtures/materials/ciclo-del-agua.pdf`). 
 4. Quiz: «Crea un quiz de 3 preguntas sobre las páginas 1-2». El chat responde con un resumen breve y un botón para abrirlo; no repite las preguntas. El panel muestra «Basado en …, páginas 1-2».
 5. Contexto: con el quiz abierto, «Explícame la pregunta 2 sin darme la respuesta». Responde sobre esa pregunta sin pedir el id.
 6. Resolver: contesta con un fallo y envía. Puntuación, corrección por pregunta con explicación y reintento.
-6b. Esquema: «Explícame las fases del ciclo del agua, páginas 1-2». Sin pedirlo, la timeline muestra «Dibujando un esquema» y el chat una tarjeta «Esquema · 6 conceptos · Abrir». En el panel: anillo de cuatro fases con las relaciones laterales; clic en un concepto → ficha con descripción, chips de página y relaciones; clic en «pág. 1» → vista previa de la página; «Preguntar al tutor» rellena el chat y el turno lleva `openNodeId`; «Lista» muestra la vista de lectura; «SVG» descarga la imagen. Después: «Hazme un esquema con las fechas de la página 3» → el tutor lee la página, explica que una lista de fechas no es un esquema y ofrece nota o quiz. Sin modelo: copia el JSON de `docs/api.md` a `.data/artifacts/artifacts/<id>.json` con un `materialId` existente y abre el panel.
+6b. Esquema: «Explícame las fases del ciclo del agua, páginas 1-3». Sin pedirlo, la timeline muestra «Dibujando un esquema» y el chat una tarjeta «Esquema · N conceptos · Abrir». En el panel: anillo de cuatro fases, cada caja con su línea de "qué es", la causa de cada transición sobre el arco, agentes (Sol, Plantas) con forma de píldora, un grupo «Destinos del agua» alrededor de Recolección, leyenda por tipos, tarjetas «Claves / Definiciones / Fechas» con chips de página, y botones «Ver: …». Clic en un concepto → ficha con tipo, subetiqueta, descripción, páginas y relaciones; clic en «pág. 1» → vista previa; «Preguntar al tutor» rellena el chat y el turno lleva `openNodeId`; «Lista» muestra la vista de lectura; «SVG» y «Mermaid» exportan (grupos y fases como `subgraph`). Después: «Hazme un diagrama con las fechas de la página 3» → las fechas acaban en una tarjeta, no en cajas. Con un PDF de evolución («línea de tiempo de …») → bandas de fase. Sin modelo: copia el JSON de `docs/api.md` a `.data/artifacts/artifacts/<id>.json` con un `materialId` existente y abre el panel.
 7. Cancelar: lanza una petición larga y pulsa «Cancelar». Aviso de turno cancelado con reintentar; la conversación anterior intacta.
 8. Persistencia: recarga la página y reinicia el servidor. La conversación se conserva; el turno cancelado no aparece.
 9. Nueva sesión: chat vacío con id distinto; al recargar sigue la nueva.

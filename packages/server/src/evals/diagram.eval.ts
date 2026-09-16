@@ -9,7 +9,7 @@ import { makeArtifactCommands } from "../domain/agents/academic-tutor/artifact-c
 import { makeMaterialCommands } from "../domain/agents/academic-tutor/material-commands.ts";
 import { makeAcademicTutorSkills, teachVisuallyExamples } from "../domain/agents/academic-tutor/skills/index.ts";
 import { describeUiContext } from "../domain/agents/academic-tutor/ui-context.ts";
-import { normalizeDiagramInput, validateDiagram, type DiagramIssueCode, type DiagramValidationContext } from "../domain/artifacts/diagram.ts";
+import { deriveSublabel, normalizeDiagramInput, validateDiagram, type DiagramIssueCode, type DiagramValidationContext } from "../domain/artifacts/diagram.ts";
 import {
   ArtifactNotFound,
   makeArtifact,
@@ -31,10 +31,11 @@ import { PopplerPdfService } from "../infra/materials/poppler-pdf-service.ts";
  * Part 2: the repair loop, driven by a scripted model: render pages, send an
  *         invalid diagram, receive the problems, send a valid one.
  * Part 3: skill text, progress labels and UI context for diagrams.
- * Part 4 (`DIAGRAM_LIVE=1`, needs GOOGLE_GENERATIVE_AI_API_KEY and Poppler): six
- *         prompts against the real model with the fixture PDF, measuring whether
- *         the tutor draws when it should, does not when it should not, and anchors
- *         every node to rendered pages that cover the expected concepts.
+ * Part 4 (`DIAGRAM_LIVE=1`, needs GOOGLE_GENERATIVE_AI_API_KEY and Poppler): seven
+ *         prompts against the real model with the fixture PDFs, measuring whether
+ *         the tutor draws when it should, does not when it should not, anchors
+ *         every node to rendered pages that cover the expected concepts, and how
+ *         much content it puts in (own sublabels, causes on the path, cards).
  *
  *   pnpm --filter @proxus/server run eval:tutor:diagram
  *   DIAGRAM_LIVE=1 pnpm --filter @proxus/server run eval:tutor:diagram
@@ -523,8 +524,8 @@ interface LiveCase {
   readonly id: string;
   readonly input: string;
   readonly materialsDir: string;
-  /** Expected diagram type, or `null` when no diagram must be created. */
-  readonly expectDiagram: "process" | "concept-map" | null;
+  /** Expected diagram type, `null` when no diagram must be created, or `"any"` when a diagram is acceptable but not required. */
+  readonly expectDiagram: "process" | "concept-map" | "timeline" | "any" | null;
   /** Concepts that must appear among the node labels (accent-insensitive). */
   readonly concepts: readonly string[];
   /** Pages every node may cite. */
@@ -532,15 +533,21 @@ interface LiveCase {
   readonly cyclic?: boolean;
   /** Text the answer must contain when no diagram is drawn. */
   readonly answerMentions?: RegExp;
+  /** A card whose title matches must exist (v2: what does not fit in boxes goes to cards). */
+  readonly cardTitled?: RegExp;
+  /** Phases a timeline must declare (accent-insensitive substrings). */
+  readonly phases?: readonly string[];
 }
 
 const liveCases: readonly LiveCase[] = [
   { id: "D1.asked-process", input: "Hazme un esquema de las fases del ciclo del agua, páginas 1-2.", materialsDir: "fixtures/materials", expectDiagram: "process", concepts: ["evaporacion", "condensacion", "precipitacion", "recoleccion"], pages: [1, 2], cyclic: true },
   { id: "D2.own-initiative", input: "Explícame las fases del ciclo del agua, páginas 1-2.", materialsDir: "fixtures/materials", expectDiagram: "process", concepts: ["evaporacion", "condensacion", "precipitacion", "recoleccion"], pages: [1, 2], cyclic: true },
   { id: "D2b.single-definition", input: "¿Qué dice la página 3 de mi material sobre los acuíferos?", materialsDir: "fixtures/materials", expectDiagram: null, concepts: [], pages: [3] },
-  { id: "D3.dates-are-not-a-diagram", input: "Hazme un diagrama con las fechas de la página 3.", materialsDir: "fixtures/materials", expectDiagram: null, concepts: [], pages: [3], answerMentions: /nota|quiz|lista/i },
-  { id: "D4.asked-concept-map", input: "Hazme un mapa de cómo se relacionan recolección, escorrentía, infiltración y acuífero (páginas 2-3).", materialsDir: "fixtures/materials", expectDiagram: "concept-map", concepts: ["escorrentia", "infiltracion", "acuifero"], pages: [2, 3] },
-  { id: "D5.no-such-material", input: "Hazme un esquema de mis apuntes de álgebra.", materialsDir: "fixtures/materials-empty", expectDiagram: null, concepts: [], pages: [] }
+  // v2: dates are not boxes, but they are not refused either: they go to a card of a diagram about the topic, or the answer offers that.
+  { id: "D3.dates-go-to-a-card", input: "Hazme un diagrama con las fechas de la página 3.", materialsDir: "fixtures/materials", expectDiagram: "any", concepts: [], pages: [1, 2, 3], answerMentions: /tarjeta|nota|fechas/i, cardTitled: /fecha|histor|autor/i },
+  { id: "D4.asked-concept-map", input: "Hazme un mapa de cómo se relacionan recolección, escorrentía, infiltración y acuífero (páginas 2-3).", materialsDir: "fixtures/materials", expectDiagram: "concept-map", concepts: ["escorrentia", "infiltracion", "acuifero"], pages: [2, 3], cardTitled: /defin/i },
+  { id: "D5.no-such-material", input: "Hazme un esquema de mis apuntes de álgebra.", materialsDir: "fixtures/materials-empty", expectDiagram: null, concepts: [], pages: [] },
+  { id: "D6.timeline", input: "Hazme una línea de tiempo de cómo cambió el diseño de la bicicleta, páginas 1-2.", materialsDir: "fixtures/materials-timeline", expectDiagram: "timeline", concepts: ["draisina", "velocipedo", "seguridad"], pages: [1, 2], phases: ["1817", "186", "188"] }
 ];
 
 const plain = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase();
@@ -568,21 +575,42 @@ const runLive = (testCase: LiveCase) => Effect.gen(function* () {
     if (testCase.answerMentions !== undefined && !testCase.answerMentions.test(result.output)) { passed = false; checks.push("answer does not offer an alternative"); }
     if (testCase.materialsDir.endsWith("empty") && renderedAll.size > 0) { passed = false; checks.push("rendered pages without material"); }
   } else if (diagram === undefined || diagram.kind !== "diagram") {
-    passed = false;
-    checks.push("no diagram created");
+    if (testCase.expectDiagram === "any") {
+      if (testCase.answerMentions !== undefined && !testCase.answerMentions.test(result.output)) { passed = false; checks.push("no diagram and the answer does not offer a card or note"); }
+      else checks.push("no diagram; the answer offers an alternative");
+    } else {
+      passed = false;
+      checks.push("no diagram created");
+    }
   } else {
     const labels = diagram.nodes.map((node) => plain(node.label));
     const missing = testCase.concepts.filter((concept) => !labels.some((label) => label.includes(concept)));
     const outside = diagram.nodes.flatMap((node) => node.pages).filter((page) => !testCase.pages.includes(page));
     const unread = (diagram.source?.pages ?? []).filter((page) => !renderedAll.has(page));
-    if (diagram.diagramType !== testCase.expectDiagram) { passed = false; checks.push(`type ${diagram.diagramType}`); }
+    if (testCase.expectDiagram !== "any" && diagram.diagramType !== testCase.expectDiagram) { passed = false; checks.push(`type ${diagram.diagramType}`); }
     if (missing.length > 0) { passed = false; checks.push(`missing concepts ${missing.join(",")}`); }
     if (outside.length > 0) { passed = false; checks.push(`pages outside ${outside.join(",")}`); }
     if (unread.length > 0) { passed = false; checks.push(`source pages not rendered ${unread.join(",")}`); }
     if (testCase.cyclic === true && diagram.cyclic !== true) { passed = false; checks.push("not cyclic"); }
     if (createCalls > 2) { passed = false; checks.push(`${createCalls} create attempts`); }
     if (/"nodes"/.test(result.output)) { passed = false; checks.push("JSON leaked into the answer"); }
-    checks.push(`nodes ${diagram.nodes.length}, edges ${diagram.edges.length}, attempts ${createCalls}`);
+    if (testCase.cardTitled !== undefined && !(diagram.cards ?? []).some((card) => testCase.cardTitled!.test(plain(card.title)))) { passed = false; checks.push("expected card missing"); }
+    if (testCase.phases !== undefined) {
+      const declared = (diagram.phases ?? []).map(plain).join(" | ");
+      const missingPhases = testCase.phases.filter((phase) => !declared.includes(plain(phase)));
+      if (missingPhases.length > 0) { passed = false; checks.push(`phases missing ${missingPhases.join(",")} in [${declared}]`); }
+    }
+
+    // v2 quality metrics (informative unless the validator already enforced them):
+    // sublabels written by the model (not derived from the description), causes on the path, cards.
+    const ownSublabels = diagram.nodes.filter((node) => node.sublabel !== undefined && node.sublabel !== deriveSublabel(node.description)).length;
+    const path = diagram.mainPath ?? [];
+    const stretches = Math.max(0, path.length - 1) + (diagram.cyclic === true && path.length >= 2 ? 1 : 0);
+    const causes = diagram.edges.filter((edge) => {
+      const from = path.indexOf(edge.from);
+      return from !== -1 && edge.label !== undefined && (path[from + 1] === edge.to || (diagram.cyclic === true && from === path.length - 1 && path[0] === edge.to));
+    }).length;
+    checks.push(`nodes ${diagram.nodes.length}, edges ${diagram.edges.length}, attempts ${createCalls}, own sublabels ${ownSublabels}/${diagram.nodes.length}, causes ${causes}/${stretches}, cards ${(diagram.cards ?? []).length}, groups ${(diagram.groups ?? []).length}, views ${(diagram.views ?? []).length}`);
   }
 
   return criterion(

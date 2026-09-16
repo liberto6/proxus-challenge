@@ -120,7 +120,7 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 ## Limitaciones conocidas
 
 - La guardia de anclaje solo detecta citas explícitas de página ("página 2", "págs. 1-3"); una afirmación inventada sin número de página no se detecta.
-- Los esquemas se validan en estructura y anclaje (ids, aristas, páginas leídas), no en la fidelidad de cada descripción al PDF; el layout propio no minimiza cruces y se limita a 12 conceptos.
+- Los esquemas se validan en estructura, contenido mínimo y anclaje (ids, aristas, subetiquetas, causas, tarjetas, páginas leídas), no en la fidelidad de cada texto al PDF; el layout propio no minimiza cruces y se limita a 16 conceptos.
 - La corrección de respuesta corta compara texto normalizado, no significado.
 - La ruta de streaming del chat es manual (fuera de Effect HTTP API), como en la base original.
 - Con la cuota gratuita de Gemini, un turno con lectura de páginas consume 3 o 4 peticiones; ante cuota diaria agotada el tutor lo dice y no reintenta.

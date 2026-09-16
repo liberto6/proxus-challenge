@@ -65,7 +65,7 @@ Todo artifact puede llevar `source: { materialId, pages }` (de qué material y p
 - `note`: contenido markdown.
 - `quiz`: preguntas cerradas.
 - `test`: preguntas cerradas o `short-answer`.
-- `diagram`: resumen visual. `diagramType` es `process` (pasos ordenados en `mainPath`, `cyclic` si se cierra, relaciones laterales en `edges`) o `concept-map` (`rootId` y aristas etiquetadas). Cada nodo lleva `id`, `label`, `description` y `pages`; `source` es obligatorio. Límites en `diagramLimits` (3-12 nodos, 20 aristas, etiquetas de 2-40 caracteres, descripciones de 20-240). Los diagramas no admiten intentos.
+- `diagram`: resumen visual. `diagramType` es `process` (pasos ordenados en `mainPath`, `cyclic` si se cierra), `concept-map` (`rootId` y aristas etiquetadas) o `timeline` (pasos en `mainPath`, `phases` en orden y `phase` en cada paso). Cada nodo lleva `id`, `label`, `sublabel` (una línea visible en la caja), `kind` (`step`, `concept`, `agent`, `condition`, `quantity`, `formula` con su `formula`, `definition`, `example`), `description` y `pages`. Una arista entre dos pasos consecutivos es la transición y su `label` es la causa. `groups` (nodos que van juntos), `cards` (claves, definiciones y fórmulas, fechas: lo que no cabe en cajas, con sus páginas) y `views` (subconjuntos con nota) son opcionales; los campos v2 son opcionales en el schema para que los diagramas guardados antes sigan decodificando, y el validador exige lo que cada tipo necesita al crear. `source` es obligatorio. Límites en `diagramLimits` (3-16 nodos, 32 aristas, subetiquetas de 8-60 caracteres, hasta 3 tarjetas de 2-5 ítems). Los diagramas no admiten intentos.
 
 ```json
 {
@@ -75,14 +75,20 @@ Todo artifact puede llevar `source: { materialId, pages }` (de qué material y p
   "summary": "Las cuatro fases se encadenan en un bucle.",
   "source": { "materialId": "ciclo-del-agua-a1b2c3", "pages": [1, 2] },
   "nodes": [
-    { "id": "evaporacion", "label": "Evaporación", "description": "El calor del sol convierte el agua en vapor que sube a la atmósfera.", "pages": [1] },
-    { "id": "condensacion", "label": "Condensación", "description": "El vapor se enfría en altura y forma nubes de gotas diminutas.", "pages": [1] },
-    { "id": "precipitacion", "label": "Precipitación", "description": "Las gotas crecen y caen como lluvia, nieve o granizo.", "pages": [2] },
-    { "id": "transpiracion", "label": "Transpiración", "description": "Las plantas liberan vapor que se suma al de la evaporación.", "pages": [2] }
+    { "id": "evaporacion", "label": "Evaporación", "sublabel": "líquido → vapor por el calor del sol", "kind": "step", "description": "El calor del sol convierte el agua en vapor que sube a la atmósfera.", "pages": [1] },
+    { "id": "condensacion", "label": "Condensación", "sublabel": "vapor → gotas; forma las nubes", "kind": "step", "description": "El vapor se enfría en altura y forma nubes de gotas diminutas.", "pages": [1] },
+    { "id": "precipitacion", "label": "Precipitación", "sublabel": "las gotas caen como lluvia, nieve o granizo", "kind": "step", "description": "Las gotas crecen y caen como lluvia, nieve o granizo.", "pages": [2] },
+    { "id": "plantas", "label": "Plantas", "sublabel": "aportan vapor por transpiración", "kind": "agent", "description": "Las plantas liberan vapor que se suma al de la evaporación.", "pages": [2] }
   ],
   "mainPath": ["evaporacion", "condensacion", "precipitacion"],
   "cyclic": true,
-  "edges": [{ "from": "transpiracion", "to": "condensacion", "label": "aporta vapor" }]
+  "edges": [
+    { "from": "evaporacion", "to": "condensacion", "label": "el vapor se enfría en altura" },
+    { "from": "condensacion", "to": "precipitacion", "label": "las gotas crecen y pesan" },
+    { "from": "precipitacion", "to": "evaporacion", "label": "el agua vuelve a calentarse" },
+    { "from": "plantas", "to": "condensacion", "label": "aportan vapor" }
+  ],
+  "cards": [{ "title": "Fechas", "items": ["Perrault (1674)", "Mariotte (1686)"], "pages": [3] }]
 }
 ```
 
