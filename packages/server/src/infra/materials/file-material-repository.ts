@@ -27,7 +27,8 @@ interface PdfFile {
 
 const MaterialMeta = Schema.Struct({
   title: Schema.String,
-  uploadedAt: Schema.String
+  uploadedAt: Schema.String,
+  folderId: Schema.optional(Schema.String)
 });
 const MaterialMetaFromJson = Schema.fromJsonString(MaterialMeta);
 
@@ -77,7 +78,8 @@ export const FileMaterialRepository = {
             pageCount: yield* pdf.pageCount(fullPath).pipe(Effect.mapError(mapError)),
             uploadedAt: Option.map(meta, (value) => value.uploadedAt).pipe(
               Option.getOrElse(() => Option.getOrElse(stat.mtime, () => new Date(0)).toISOString())
-            )
+            ),
+            ...(Option.flatMap(meta, (value) => Option.fromNullishOr(value.folderId)).pipe(Option.match({ onNone: () => ({}), onSome: (folderId) => ({ folderId }) })))
           };
           return { material, path: fullPath };
         }),
@@ -164,9 +166,10 @@ export const FileMaterialRepository = {
 
       yield* fs.rename(staging, target).pipe(Effect.mapError(mapError));
       const uploadedAt = new Date().toISOString();
-      yield* fs.writeFileString(metaPath(id), `${JSON.stringify({ title, uploadedAt }, null, 2)}\n`).pipe(Effect.mapError(mapError));
+      const folder = input.folderId === undefined ? {} : { folderId: input.folderId };
+      yield* fs.writeFileString(metaPath(id), `${JSON.stringify({ title, uploadedAt, ...folder }, null, 2)}\n`).pipe(Effect.mapError(mapError));
 
-      return { id, title, fileName: `${id}.pdf`, pageCount, uploadedAt };
+      return { id, title, fileName: `${id}.pdf`, pageCount, uploadedAt, ...folder };
     });
 
     const remove = (id: string): Effect.Effect<void, MaterialNotFound | MaterialRepositoryError> => Effect.gen(function* () {

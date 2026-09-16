@@ -6,7 +6,7 @@ import { apiRuntime } from "../../lib/runtime.ts";
 export const materialsQuery = apiRuntime
   .atom(
     ApiClient.use((client) =>
-      client.materials.list()
+      client.materials.list({ query: {} })
     ).pipe(Effect.withSpan("materials.list", { kind: "client" }))
   )
   .pipe(Atom.keepAlive, Atom.withReactivity(["materials"]));

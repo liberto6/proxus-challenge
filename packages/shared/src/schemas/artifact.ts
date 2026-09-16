@@ -74,7 +74,9 @@ const artifactBase = {
   id: Schema.String,
   title: Schema.String,
   source: Schema.optional(ArtifactSource),
-  createdAt: Schema.optional(Schema.String)
+  createdAt: Schema.optional(Schema.String),
+  /** Folder of the conversation that created it; absent means General. */
+  folderId: Schema.optional(Schema.String)
 };
 
 // --- Diagrams -------------------------------------------------------------------
@@ -262,7 +264,8 @@ export const ArtifactSummary = Schema.Struct({
   kind: ArtifactKind,
   title: Schema.String,
   source: Schema.optional(ArtifactSource),
-  createdAt: Schema.optional(Schema.String)
+  createdAt: Schema.optional(Schema.String),
+  folderId: Schema.optional(Schema.String)
 });
 export type ArtifactSummary = typeof ArtifactSummary.Type;
 
@@ -322,7 +325,8 @@ export const CreateArtifactInput = Schema.Union([
 export type CreateArtifactInput = typeof CreateArtifactInput.Type;
 
 export const ListArtifactsInput = Schema.Struct({
-  kind: Schema.optional(ArtifactKind)
+  kind: Schema.optional(ArtifactKind),
+  folderId: Schema.optional(Schema.String)
 });
 export type ListArtifactsInput = typeof ListArtifactsInput.Type;
 

@@ -10,6 +10,7 @@ import { TutorChatService, TutorChatServiceLive } from "../../domain/agents/acad
 import { TutorOptions } from "../../domain/agents/academic-tutor/tutor-options.ts";
 import { FileArtifactRepository } from "../../infra/artifacts/file-artifact-repository.ts";
 import { FileSessionRepository } from "../../infra/agents/file-session-repository.ts";
+import { FileFolderRepository } from "../../infra/folders/file-folder-repository.ts";
 import { FileMaterialRepository } from "../../infra/materials/file-material-repository.ts";
 import { PopplerPdfService } from "../../infra/materials/poppler-pdf-service.ts";
 import { HttpHandlersLive } from "./handlers.ts";
@@ -63,7 +64,8 @@ const InfraLive = Layer.mergeAll(
     Layer.provide(PopplerPdfService.layer)
   ),
   FileArtifactRepository.layer(".data/artifacts"),
-  FileSessionRepository.layer(".data/agent-sessions")
+  FileSessionRepository.layer(".data/agent-sessions"),
+  FileFolderRepository.layer(".data/folders")
 );
 
 export const HttpServerLive = HttpRouter.serve(Routes).pipe(

@@ -27,7 +27,11 @@ const rememberSessionId = (id: string) => {
 };
 
 export const createSession = async (): Promise<AgentSession> => {
-  const response = await fetch(`${apiClientConfig.apiUrl}/api/tutor/sessions`, { method: "POST" });
+  const response = await fetch(`${apiClientConfig.apiUrl}/api/tutor/sessions`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({})
+  });
   if (!response.ok) {
     throw new Error(`No se pudo crear la sesión (${response.status})`);
   }

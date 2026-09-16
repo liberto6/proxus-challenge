@@ -1,9 +1,10 @@
 import { Effect, FileSystem, Layer } from "effect";
 import { HttpApiBuilder, HttpApiError } from "effect/unstable/httpapi";
-import { ProxusApi } from "@proxus/shared";
+import { FolderNotEmpty, FolderTitleTaken, ProxusApi } from "@proxus/shared";
 import { TutorChatService } from "../../domain/agents/academic-tutor/tutor-chat-service.ts";
 import { SessionRepository } from "../../domain/agents/harness/index.ts";
 import { ArtifactRepository, type Artifact } from "../../domain/artifacts/artifact.ts";
+import { FolderRepository, folderOf, isFolderEmpty } from "../../domain/folders/folder.ts";
 import { MaterialRepository, titleFromFileName } from "../../domain/materials/material.ts";
 
 export const TutorHttpHandlers = HttpApiBuilder.group(
@@ -17,11 +18,11 @@ export const TutorHttpHandlers = HttpApiBuilder.group(
       .handle("chat", ({ payload }) =>
         tutor.sendMessage(payload).pipe(Effect.orDie)
       )
-      .handle("createSession", () =>
-        sessions.makeSession({ id: crypto.randomUUID() }).pipe(Effect.orDie)
+      .handle("createSession", ({ payload }) =>
+        sessions.makeSession({ id: crypto.randomUUID(), folderId: payload.folderId }).pipe(Effect.orDie)
       )
-      .handle("listSessions", () =>
-        sessions.listSessions().pipe(
+      .handle("listSessions", ({ query }) =>
+        sessions.listSessions({ folderId: query.folderId }).pipe(
           Effect.map((items) => ({ sessions: items })),
           Effect.orDie
         )
@@ -40,8 +41,8 @@ export const MaterialsHttpHandlers = HttpApiBuilder.group(
     const fs = yield* FileSystem.FileSystem;
 
     return handlers
-      .handle("list", () => materials.list().pipe(
-        Effect.map((items) => ({ materials: items })),
+      .handle("list", ({ query }) => materials.list().pipe(
+        Effect.map((items) => ({ materials: items.filter((material) => query.folderId === undefined || folderOf(material) === query.folderId) })),
         Effect.orDie
       ))
       .handle("get", ({ params }) => materials.get(params.id).pipe(Effect.orDie))
@@ -66,7 +67,8 @@ export const MaterialsHttpHandlers = HttpApiBuilder.group(
         const title = payload.title === undefined || payload.title.trim().length === 0
           ? titleFromFileName(payload.file.name)
           : payload.title;
-        return yield* materials.save({ title, fileName: payload.file.name, bytes }).pipe(
+        const folderId = payload.folderId === undefined || payload.folderId.trim().length === 0 ? undefined : payload.folderId;
+        return yield* materials.save({ title, fileName: payload.file.name, bytes, folderId }).pipe(
           Effect.catchTag("InvalidMaterialFile", (error) =>
             Effect.logWarning("material upload rejected").pipe(
               Effect.annotateLogs({ fileName: error.fileName, reason: error.reason }),
@@ -88,7 +90,8 @@ const artifactSummary = (artifact: Artifact) => ({
   kind: artifact.kind,
   title: artifact.title,
   ...(artifact.source === undefined ? {} : { source: artifact.source }),
-  ...(artifact.createdAt === undefined ? {} : { createdAt: artifact.createdAt })
+  ...(artifact.createdAt === undefined ? {} : { createdAt: artifact.createdAt }),
+  ...(artifact.folderId === undefined ? {} : { folderId: artifact.folderId })
 });
 
 export const ArtifactsHttpHandlers = HttpApiBuilder.group(
@@ -98,7 +101,7 @@ export const ArtifactsHttpHandlers = HttpApiBuilder.group(
     const artifacts = yield* ArtifactRepository;
 
     return handlers
-      .handle("list", ({ query }) => artifacts.listArtifacts({ kind: query.kind }).pipe(
+      .handle("list", ({ query }) => artifacts.listArtifacts({ kind: query.kind, folderId: query.folderId }).pipe(
         Effect.map((items) => ({ artifacts: items.map(artifactSummary) })),
         Effect.orDie
       ))
@@ -113,8 +116,61 @@ export const ArtifactsHttpHandlers = HttpApiBuilder.group(
   })
 );
 
+/**
+ * Folders. Deleting one is refused while it still holds materials,
+ * conversations or artifacts: the counts go back so the interface can say why.
+ */
+export const FoldersHttpHandlers = HttpApiBuilder.group(
+  ProxusApi,
+  "folders",
+  Effect.fn(function* (handlers) {
+    const folders = yield* FolderRepository;
+    const materials = yield* MaterialRepository;
+    const sessions = yield* SessionRepository;
+    const artifacts = yield* ArtifactRepository;
+
+    const contentsOf = (folderId: string) => Effect.all({
+      materials: materials.list().pipe(Effect.map((items) => items.filter((item) => folderOf(item) === folderId).length)),
+      sessions: sessions.listSessions({ folderId }).pipe(Effect.map((items) => items.length)),
+      artifacts: artifacts.listArtifacts({ folderId }).pipe(Effect.map((items) => items.length))
+    }).pipe(Effect.orDie);
+
+    return handlers
+      .handle("list", () => folders.list().pipe(
+        Effect.map((items) => ({ folders: items })),
+        Effect.orDie
+      ))
+      .handle("create", ({ payload }) => folders.create(payload.title).pipe(
+        Effect.catchTag("FolderTitleInvalid", () => new HttpApiError.BadRequest()),
+        Effect.catchTag("FolderTitleTaken", (error) => new FolderTitleTaken({ title: error.title })),
+        Effect.catchTag("FolderRepositoryError", (error) => Effect.die(error))
+      ))
+      .handle("rename", ({ params, payload }) => folders.rename(params.id, payload.title).pipe(
+        Effect.catchTag("FolderNotFound", () => new HttpApiError.NotFound()),
+        Effect.catchTag("FolderTitleInvalid", () => new HttpApiError.BadRequest()),
+        Effect.catchTag("FolderTitleTaken", (error) => new FolderTitleTaken({ title: error.title })),
+        Effect.catchTag("FolderRepositoryError", (error) => Effect.die(error))
+      ))
+      .handle("remove", ({ params }) => Effect.gen(function* () {
+        yield* folders.get(params.id).pipe(
+          Effect.catchTag("FolderNotFound", () => new HttpApiError.NotFound()),
+          Effect.catchTag("FolderRepositoryError", (error) => Effect.die(error))
+        );
+        const contents = yield* contentsOf(params.id);
+        if (!isFolderEmpty(contents)) {
+          return yield* new FolderNotEmpty(contents);
+        }
+        yield* folders.remove(params.id).pipe(
+          Effect.catchTag("FolderNotFound", () => new HttpApiError.NotFound()),
+          Effect.catchTag("FolderRepositoryError", (error) => Effect.die(error))
+        );
+      }));
+  })
+);
+
 export const HttpHandlersLive = Layer.mergeAll(
   TutorHttpHandlers,
   MaterialsHttpHandlers,
-  ArtifactsHttpHandlers
+  ArtifactsHttpHandlers,
+  FoldersHttpHandlers
 );

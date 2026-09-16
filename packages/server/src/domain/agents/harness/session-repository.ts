@@ -6,10 +6,18 @@ export interface StoredAgentSession {
   readonly messages: readonly AgentMessage[];
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Folder the conversation belongs to; absent means General. */
+  readonly folderId?: string | undefined;
 }
 
 export interface MakeSessionInput {
   readonly id: string;
+  readonly folderId?: string | undefined;
+}
+
+export interface ListSessionsInput {
+  /** Only sessions of this folder (`general` includes sessions without folder). */
+  readonly folderId?: string | undefined;
 }
 
 export interface AppendMessagesInput {
@@ -45,6 +53,7 @@ export interface StoredAgentSessionSummary {
   readonly updatedAt: string;
   readonly messageCount: number;
   readonly preview: string;
+  readonly folderId?: string | undefined;
 }
 
 export interface SessionRepository {
@@ -58,7 +67,7 @@ export interface SessionRepository {
     input: AppendMessagesInput
   ) => Effect.Effect<void, SessionRepositoryError>;
   /** Sessions ordered by last update, newest first. */
-  readonly listSessions: () => Effect.Effect<readonly StoredAgentSessionSummary[], SessionRepositoryError>;
+  readonly listSessions: (input?: ListSessionsInput) => Effect.Effect<readonly StoredAgentSessionSummary[], SessionRepositoryError>;
 }
 
 export const summarizeSession = (session: StoredAgentSession): StoredAgentSessionSummary => {
@@ -69,7 +78,8 @@ export const summarizeSession = (session: StoredAgentSession): StoredAgentSessio
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
     messageCount: session.messages.length,
-    preview
+    preview,
+    ...(session.folderId === undefined ? {} : { folderId: session.folderId })
   };
 };
 

@@ -5,7 +5,9 @@ export const PdfMaterial = Schema.Struct({
   title: Schema.String,
   fileName: Schema.String,
   pageCount: Schema.Number,
-  uploadedAt: Schema.String
+  uploadedAt: Schema.String,
+  /** Folder the PDF belongs to; absent means the General folder. */
+  folderId: Schema.optional(Schema.String)
 });
 export type PdfMaterial = typeof PdfMaterial.Type;
 

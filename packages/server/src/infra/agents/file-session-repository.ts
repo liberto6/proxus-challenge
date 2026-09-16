@@ -6,12 +6,14 @@ import {
   SessionRepositorySerializationError,
   SessionRepositoryStorageError,
   type AppendMessagesInput,
+  type ListSessionsInput,
   type MakeSessionInput,
   type SessionRepository as SessionRepositoryType,
   type SessionRepositoryError,
   type StoredAgentSession,
   summarizeSession
 } from "../../domain/agents/harness/index.ts";
+import { folderOf } from "../../domain/folders/folder.ts";
 
 const UserMessageSchema = Schema.Struct({
   role: Schema.Literal("user"),
@@ -50,7 +52,8 @@ const StoredAgentSessionSchema = Schema.Struct({
   id: Schema.String,
   messages: Schema.Array(AgentMessageSchema),
   createdAt: Schema.String,
-  updatedAt: Schema.String
+  updatedAt: Schema.String,
+  folderId: Schema.optional(Schema.String)
 });
 
 const StoredAgentSessionFromJson = Schema.fromJsonString(StoredAgentSessionSchema);
@@ -120,7 +123,8 @@ export const FileSessionRepository = {
         id: input.id,
         messages: [],
         createdAt: now,
-        updatedAt: now
+        updatedAt: now,
+        ...(input.folderId === undefined ? {} : { folderId: input.folderId })
       };
 
       yield* writeSessionFile(session);
@@ -143,7 +147,7 @@ export const FileSessionRepository = {
       yield* writeSessionFile(updatedSession);
     });
 
-    const listSessions = () => Effect.gen(function* () {
+    const listSessions = (input: ListSessionsInput = {}) => Effect.gen(function* () {
       const directoryExists = yield* fs.exists(directory).pipe(Effect.mapError(mapStorageError));
       if (!directoryExists) {
         return [];
@@ -156,6 +160,7 @@ export const FileSessionRepository = {
 
       const sessions = yield* Effect.forEach(ids, (id) => readSessionFile(id), { concurrency: 4 });
       return sessions
+        .filter((session) => input.folderId === undefined || folderOf(session) === input.folderId)
         .map(summarizeSession)
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     });

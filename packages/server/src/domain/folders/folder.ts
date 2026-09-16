@@ -1,0 +1,72 @@
+import { Context, Data, Effect } from "effect";
+import { folderTitleLimits, generalFolderId, generalFolderTitle, type Folder } from "@proxus/shared";
+
+/**
+ * Folders group materials, conversations and practice. Membership lives on
+ * each item (`folderId`, absent = General), so the repository only stores the
+ * folders themselves. `General` always exists: it is virtual until renamed.
+ */
+export { Folder, folderOf, generalFolderId, generalFolderTitle } from "@proxus/shared";
+
+export class FolderNotFound extends Data.TaggedError("FolderNotFound")<{
+  readonly folderId: string;
+}> {}
+
+export class FolderTitleInvalid extends Data.TaggedError("FolderTitleInvalid")<{
+  readonly title: string;
+  readonly reason: string;
+}> {}
+
+export class FolderTitleTakenError extends Data.TaggedError("FolderTitleTaken")<{
+  readonly title: string;
+}> {}
+
+export class FolderRepositoryError extends Data.TaggedError("FolderRepositoryError")<{
+  readonly reason: unknown;
+}> {}
+
+export interface FolderRepository {
+  /** All folders, General first, the rest by creation date. */
+  readonly list: () => Effect.Effect<readonly Folder[], FolderRepositoryError>;
+  readonly get: (id: string) => Effect.Effect<Folder, FolderNotFound | FolderRepositoryError>;
+  readonly create: (title: string) => Effect.Effect<Folder, FolderTitleInvalid | FolderTitleTakenError | FolderRepositoryError>;
+  readonly rename: (id: string, title: string) => Effect.Effect<Folder, FolderNotFound | FolderTitleInvalid | FolderTitleTakenError | FolderRepositoryError>;
+  /** Deletes the folder record only; the caller checks it is empty first. General cannot be removed. */
+  readonly remove: (id: string) => Effect.Effect<void, FolderNotFound | FolderRepositoryError>;
+}
+
+export const FolderRepository = Context.Service<FolderRepository>("@proxus/server/folders/FolderRepository");
+
+/** The General folder as shown when nothing has been stored for it yet. */
+export const generalFolder: Folder = { id: generalFolderId, title: generalFolderTitle, createdAt: "1970-01-01T00:00:00.000Z" };
+
+/** Trims and checks a title; the comparison key ignores case and accents so "Biología" and "biologia" clash. */
+export const normalizeFolderTitle = (title: string): Effect.Effect<string, FolderTitleInvalid> => {
+  const trimmed = title.replace(/\s+/g, " ").trim();
+  if (trimmed.length < folderTitleLimits.min) {
+    return Effect.fail(new FolderTitleInvalid({ title, reason: "El nombre no puede estar vacío" }));
+  }
+  if (trimmed.length > folderTitleLimits.max) {
+    return Effect.fail(new FolderTitleInvalid({ title, reason: `El nombre no puede superar ${folderTitleLimits.max} caracteres` }));
+  }
+  return Effect.succeed(trimmed);
+};
+
+export const folderTitleKey = (title: string): string =>
+  title.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase().trim();
+
+/** Stable, URL-safe id from a title plus a short random suffix. */
+export const folderIdFor = (title: string, suffix: string = crypto.randomUUID().slice(0, 6)): string => {
+  const slug = folderTitleKey(title).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40).replace(/-+$/g, "");
+  return `${slug.length > 0 ? slug : "carpeta"}-${suffix}`;
+};
+
+/** What a folder still holds; a folder is deleted only when every count is zero. */
+export interface FolderContents {
+  readonly materials: number;
+  readonly sessions: number;
+  readonly artifacts: number;
+}
+
+export const isFolderEmpty = (contents: FolderContents): boolean =>
+  contents.materials === 0 && contents.sessions === 0 && contents.artifacts === 0;

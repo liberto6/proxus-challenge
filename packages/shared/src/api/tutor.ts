@@ -2,6 +2,13 @@ import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
 import { AgentMessage } from "../schemas/agent-message.ts";
 import { AgentSession, AgentSessionListResponse } from "../schemas/agent-session.ts";
+import { FolderQuery } from "../schemas/folder.ts";
+
+/** Where a new conversation is created; absent means General. */
+export const CreateSessionInput = Schema.Struct({
+  folderId: Schema.optional(Schema.String)
+});
+export type CreateSessionInput = typeof CreateSessionInput.Type;
 
 /**
  * One tutor turn. The conversation lives on the server: the client sends the
@@ -42,9 +49,11 @@ export class TutorApi extends HttpApiGroup.make("tutor")
       success: TutorChatResponse
     }),
     HttpApiEndpoint.post("createSession", "/sessions", {
+      payload: CreateSessionInput,
       success: AgentSession
     }),
     HttpApiEndpoint.get("listSessions", "/sessions", {
+      query: FolderQuery,
       success: AgentSessionListResponse
     }),
     HttpApiEndpoint.get("getSession", "/sessions/:id", {

@@ -15,6 +15,7 @@
     "eval:tutor:grounding": "node --env-file=../../.env --import tsx src/evals/grounding.eval.ts",
     "eval:tutor:sessions": "node --import tsx src/evals/sessions.eval.ts",
     "eval:materials": "node --import tsx src/evals/materials.eval.ts",
+    "eval:folders": "node --import tsx src/evals/folders.eval.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

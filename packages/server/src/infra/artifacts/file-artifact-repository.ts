@@ -17,8 +17,10 @@ import {
   type Artifact as ArtifactType,
   type ArtifactAttempt as ArtifactAttemptType,
   type ArtifactRepository as ArtifactRepositoryType,
-  type ArtifactRepositoryError
+  type ArtifactRepositoryError,
+  type CreateArtifactOptions
 } from "../../domain/artifacts/artifact.ts";
+import { folderOf } from "../../domain/folders/folder.ts";
 
 const ArtifactFromJson = Schema.fromJsonString(Artifact);
 const ArtifactAttemptFromJson = Schema.fromJsonString(ArtifactAttempt);
@@ -103,8 +105,8 @@ export const FileArtifactRepository = {
       return yield* fs.readDirectory(targetDirectory).pipe(Effect.mapError(mapStorageError));
     });
 
-    const createArtifact = (input: CreateArtifactInput) => Effect.gen(function* () {
-      const artifact = makeArtifact(input);
+    const createArtifact = (input: CreateArtifactInput, options: CreateArtifactOptions = {}) => Effect.gen(function* () {
+      const artifact = makeArtifact(input, options);
       yield* writeArtifactFile(artifact);
       return artifact;
     });
@@ -117,7 +119,10 @@ export const FileArtifactRepository = {
           return readArtifactFile(artifactId);
         })
       );
-      return artifacts.filter((artifact) => input.kind === undefined || artifact.kind === input.kind);
+      return artifacts.filter((artifact) =>
+        (input.kind === undefined || artifact.kind === input.kind)
+        && (input.folderId === undefined || folderOf(artifact) === input.folderId)
+      );
     });
 
     const submitAttempt = (input: SubmitAttemptInput) => Effect.gen(function* () {

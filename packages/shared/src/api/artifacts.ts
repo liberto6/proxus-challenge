@@ -3,7 +3,8 @@ import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
 import { Artifact, ArtifactAttempt, ArtifactKind, ArtifactListResponse, SubmitAttemptInput } from "../schemas/artifact.ts";
 
 const ArtifactKindQuery = Schema.Struct({
-  kind: Schema.optional(ArtifactKind)
+  kind: Schema.optional(ArtifactKind),
+  folderId: Schema.optional(Schema.String)
 });
 
 export class ArtifactsApi extends HttpApiGroup.make("artifacts")

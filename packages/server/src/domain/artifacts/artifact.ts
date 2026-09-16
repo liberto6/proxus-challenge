@@ -121,7 +121,7 @@ export type ArtifactRepositoryError =
   | ArtifactRepositorySerializationError;
 
 export interface ArtifactRepository {
-  readonly createArtifact: (input: CreateArtifactInput) => Effect.Effect<Artifact, ArtifactRepositoryError>;
+  readonly createArtifact: (input: CreateArtifactInput, options?: CreateArtifactOptions) => Effect.Effect<Artifact, ArtifactRepositoryError>;
   readonly saveArtifact: (artifact: Artifact) => Effect.Effect<void, ArtifactRepositoryError>;
   readonly getArtifact: (id: string) => Effect.Effect<Artifact, ArtifactRepositoryError>;
   readonly listArtifacts: (input?: ListArtifactsInput) => Effect.Effect<readonly Artifact[], ArtifactRepositoryError>;
@@ -136,18 +136,24 @@ export const ArtifactRepository = Context.Service<ArtifactRepository>(
   "@proxus/server/artifacts/ArtifactRepository"
 );
 
-export const makeArtifact = (input: CreateArtifactInput): Artifact => {
+export interface CreateArtifactOptions {
+  /** Folder of the conversation creating it; absent means General. */
+  readonly folderId?: string | undefined;
+}
+
+export const makeArtifact = (input: CreateArtifactInput, options: CreateArtifactOptions = {}): Artifact => {
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
+  const folder = options.folderId === undefined ? {} : { folderId: options.folderId };
   switch (input.kind) {
     case "note":
-      return { ...input, id, createdAt };
+      return { ...input, id, createdAt, ...folder };
     case "quiz":
-      return { ...input, id, createdAt };
+      return { ...input, id, createdAt, ...folder };
     case "test":
-      return { ...input, id, createdAt };
+      return { ...input, id, createdAt, ...folder };
     case "diagram":
-      return { ...input, id, createdAt };
+      return { ...input, id, createdAt, ...folder };
   }
 };
 

@@ -6,6 +6,8 @@ export interface PdfMaterial {
   readonly fileName: string;
   readonly pageCount: number;
   readonly uploadedAt: string;
+  /** Folder the PDF belongs to; absent means General. */
+  readonly folderId?: string | undefined;
 }
 
 export interface PageImage {
@@ -44,6 +46,8 @@ export interface SaveMaterialInput {
   readonly title: string;
   readonly fileName: string;
   readonly bytes: Uint8Array;
+  /** Folder to store it in; absent means General. */
+  readonly folderId?: string | undefined;
 }
 
 export interface MaterialRepository {
