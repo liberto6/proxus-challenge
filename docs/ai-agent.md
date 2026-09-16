@@ -50,7 +50,7 @@ Artifacts:
 ```txt
 artifacts list
 artifacts show <artifactId>
-artifacts create '<json>'
+artifacts create '<json>'          # admite source: { materialId, pages }
 artifacts submit '<json>'
 artifacts attempts [artifactId]
 artifacts grade <attemptId>

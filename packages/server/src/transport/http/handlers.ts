@@ -71,7 +71,9 @@ export const MaterialsHttpHandlers = HttpApiBuilder.group(
 const artifactSummary = (artifact: Artifact) => ({
   id: artifact.id,
   kind: artifact.kind,
-  title: artifact.title
+  title: artifact.title,
+  ...(artifact.source === undefined ? {} : { source: artifact.source }),
+  ...(artifact.createdAt === undefined ? {} : { createdAt: artifact.createdAt })
 });
 
 export const ArtifactsHttpHandlers = HttpApiBuilder.group(

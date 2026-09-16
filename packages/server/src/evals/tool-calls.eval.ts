@@ -8,6 +8,8 @@ import { MaterialNotFound, MaterialRepository, type PdfMaterial } from "../domai
 import { classifyFailure, promptContents, requestBody, skipThoughtSignature, toResponseParts } from "../infra/agents/gemini-language-model.ts";
 import { describeModelFailure } from "../domain/agents/harness/session.ts";
 import { describeUiContext } from "../domain/agents/academic-tutor/ui-context.ts";
+import { Artifact, artifactKinds, isArtifactKind, makeArtifact } from "../domain/artifacts/artifact.ts";
+import { Schema } from "effect";
 
 /**
  * Deterministic eval (no API calls): the tool-call protocol between the harness
@@ -293,6 +295,29 @@ const uiContextCase = Effect.gen(function* () {
   ];
 });
 
+// --- Case 3c: one artifact schema, with provenance and backwards compatibility --
+
+const artifactSchemaCase = Effect.sync(() => {
+  const created = makeArtifact({
+    kind: "quiz",
+    title: "Quiz páginas 1-2",
+    source: { materialId: "ciclo-del-agua", pages: [1, 2] },
+    questions: [{ type: "true-false", id: "q1", prompt: "¿Llueve?", correctAnswer: true, explanation: "Sí." }]
+  });
+  const legacy = Schema.decodeUnknownExit(Artifact)({
+    kind: "quiz", id: "old", title: "Sin origen", questions: []
+  });
+  const unknownKind = Schema.decodeUnknownExit(Artifact)({
+    kind: "diagram", id: "d1", title: "Mapa", nodes: []
+  });
+
+  return [
+    criterion("artifact-keeps-source-and-stamps-createdAt", created.source?.materialId === "ciclo-del-agua" && created.source.pages.length === 2 && typeof created.createdAt === "string", `source: ${JSON.stringify(created.source)}, createdAt: ${created.createdAt}`),
+    criterion("artifact-without-provenance-still-decodes", legacy._tag === "Success", legacy._tag),
+    criterion("artifact-unknown-kind-rejected", unknownKind._tag === "Failure" && !isArtifactKind("diagram") && artifactKinds.length === 3, `kinds: ${artifactKinds.join(",")}`)
+  ];
+});
+
 // --- Case 4: provider failures are classified and explained --------------------
 
 const providerFailureCase = Effect.sync(() => {
@@ -329,6 +354,7 @@ export const toolCallsEval = Effect.gen(function* () {
     ...(yield* streamEventsCase.pipe(Effect.provide(FixtureMaterialRepository))),
     ...(yield* geminiResponseCase),
     ...(yield* uiContextCase.pipe(Effect.provide(FixtureMaterialRepository))),
+    ...(yield* artifactSchemaCase),
     ...(yield* providerFailureCase)
   ];
 

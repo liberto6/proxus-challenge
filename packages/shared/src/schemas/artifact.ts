@@ -1,5 +1,17 @@
 import { Schema } from "effect";
 
+/**
+ * Single source of truth for study artifacts (notes, quizzes, tests), their
+ * attempts and corrections. The server domain imports these schemas and adds
+ * only behaviour (validation, grading); the web renders them.
+ *
+ * To add an artifact kind: add its schema to `ArtifactByKind` and its create
+ * input to `CreateArtifactInputByKind`; the unions, the kind literals and the
+ * API contracts derive from those maps.
+ */
+
+// --- Questions ----------------------------------------------------------------
+
 export const QuestionOption = Schema.Struct({
   id: Schema.String,
   text: Schema.String
@@ -47,46 +59,78 @@ export const TestQuestion = Schema.Union([
 ]);
 export type TestQuestion = typeof TestQuestion.Type;
 
-export const NoteArtifact = Schema.Struct({
-  kind: Schema.Literal("note"),
+// --- Provenance ---------------------------------------------------------------
+
+/** Where an artifact comes from: the material and the pages it was built on. */
+export const ArtifactSource = Schema.Struct({
+  materialId: Schema.String,
+  pages: Schema.Array(Schema.Number)
+});
+export type ArtifactSource = typeof ArtifactSource.Type;
+
+// Common to every artifact. `source` and `createdAt` are optional so artifacts
+// stored before they existed still decode.
+const artifactBase = {
   id: Schema.String,
   title: Schema.String,
+  source: Schema.optional(ArtifactSource),
+  createdAt: Schema.optional(Schema.String)
+};
+
+// --- Artifacts, by kind (the registry) ------------------------------------------
+
+export const NoteArtifact = Schema.Struct({
+  kind: Schema.Literal("note"),
+  ...artifactBase,
   markdown: Schema.String
 });
 export type NoteArtifact = typeof NoteArtifact.Type;
 
 export const QuizArtifact = Schema.Struct({
   kind: Schema.Literal("quiz"),
-  id: Schema.String,
-  title: Schema.String,
+  ...artifactBase,
   questions: Schema.Array(QuizQuestion)
 });
 export type QuizArtifact = typeof QuizArtifact.Type;
 
 export const TestArtifact = Schema.Struct({
   kind: Schema.Literal("test"),
-  id: Schema.String,
-  title: Schema.String,
+  ...artifactBase,
   questions: Schema.Array(TestQuestion)
 });
 export type TestArtifact = typeof TestArtifact.Type;
 
+export const ArtifactByKind = {
+  note: NoteArtifact,
+  quiz: QuizArtifact,
+  test: TestArtifact
+} as const;
+
+export const artifactKinds = ["note", "quiz", "test"] as const satisfies ReadonlyArray<keyof typeof ArtifactByKind>;
+export type ArtifactKind = (typeof artifactKinds)[number];
+
+export const ArtifactKind = Schema.Union([
+  Schema.Literal("note"),
+  Schema.Literal("quiz"),
+  Schema.Literal("test")
+]);
+
 export const Artifact = Schema.Union([
-  NoteArtifact,
-  QuizArtifact,
-  TestArtifact
+  ArtifactByKind.note,
+  ArtifactByKind.quiz,
+  ArtifactByKind.test
 ]);
 export type Artifact = typeof Artifact.Type;
-export type ArtifactKind = Artifact["kind"];
+
+export const isArtifactKind = (value: unknown): value is ArtifactKind =>
+  typeof value === "string" && (artifactKinds as ReadonlyArray<string>).includes(value);
 
 export const ArtifactSummary = Schema.Struct({
   id: Schema.String,
-  kind: Schema.Union([
-    Schema.Literal("note"),
-    Schema.Literal("quiz"),
-    Schema.Literal("test")
-  ]),
-  title: Schema.String
+  kind: ArtifactKind,
+  title: Schema.String,
+  source: Schema.optional(ArtifactSource),
+  createdAt: Schema.optional(Schema.String)
 });
 export type ArtifactSummary = typeof ArtifactSummary.Type;
 
@@ -94,6 +138,54 @@ export const ArtifactListResponse = Schema.Struct({
   artifacts: Schema.Array(ArtifactSummary)
 });
 export type ArtifactListResponse = typeof ArtifactListResponse.Type;
+
+// --- Creation inputs (what the tutor sends through `artifacts create`) ---------
+
+const createBase = {
+  title: Schema.String,
+  source: Schema.optional(ArtifactSource)
+};
+
+export const CreateNoteArtifactInput = Schema.Struct({
+  kind: Schema.Literal("note"),
+  ...createBase,
+  markdown: Schema.String
+});
+export type CreateNoteArtifactInput = typeof CreateNoteArtifactInput.Type;
+
+export const CreateQuizArtifactInput = Schema.Struct({
+  kind: Schema.Literal("quiz"),
+  ...createBase,
+  questions: Schema.Array(QuizQuestion)
+});
+export type CreateQuizArtifactInput = typeof CreateQuizArtifactInput.Type;
+
+export const CreateTestArtifactInput = Schema.Struct({
+  kind: Schema.Literal("test"),
+  ...createBase,
+  questions: Schema.Array(TestQuestion)
+});
+export type CreateTestArtifactInput = typeof CreateTestArtifactInput.Type;
+
+export const CreateArtifactInputByKind = {
+  note: CreateNoteArtifactInput,
+  quiz: CreateQuizArtifactInput,
+  test: CreateTestArtifactInput
+} as const;
+
+export const CreateArtifactInput = Schema.Union([
+  CreateArtifactInputByKind.note,
+  CreateArtifactInputByKind.quiz,
+  CreateArtifactInputByKind.test
+]);
+export type CreateArtifactInput = typeof CreateArtifactInput.Type;
+
+export const ListArtifactsInput = Schema.Struct({
+  kind: Schema.optional(ArtifactKind)
+});
+export type ListArtifactsInput = typeof ListArtifactsInput.Type;
+
+// --- Answers ----------------------------------------------------------------------
 
 export const MultipleChoiceAnswer = Schema.Struct({
   questionType: Schema.Literal("multiple-choice"),
@@ -128,6 +220,8 @@ export const TestAnswer = Schema.Union([
   ShortAnswerAnswer
 ]);
 export type TestAnswer = typeof TestAnswer.Type;
+
+// --- Corrections --------------------------------------------------------------------
 
 export const MultipleChoiceCorrection = Schema.Struct({
   questionType: Schema.Literal("multiple-choice"),
@@ -171,11 +265,18 @@ export const QuestionCorrection = Schema.Union([
 ]);
 export type QuestionCorrection = typeof QuestionCorrection.Type;
 
+// --- Attempts -------------------------------------------------------------------------
+
+const attemptBase = {
+  id: Schema.String,
+  artifactId: Schema.String,
+  createdAt: Schema.optional(Schema.String)
+};
+
 export const UngradedQuizAttempt = Schema.Struct({
   artifactKind: Schema.Literal("quiz"),
   status: Schema.Literal("ungraded"),
-  id: Schema.String,
-  artifactId: Schema.String,
+  ...attemptBase,
   answers: Schema.Array(QuizAnswer)
 });
 export type UngradedQuizAttempt = typeof UngradedQuizAttempt.Type;
@@ -183,8 +284,7 @@ export type UngradedQuizAttempt = typeof UngradedQuizAttempt.Type;
 export const GradedQuizAttempt = Schema.Struct({
   artifactKind: Schema.Literal("quiz"),
   status: Schema.Literal("graded"),
-  id: Schema.String,
-  artifactId: Schema.String,
+  ...attemptBase,
   answers: Schema.Array(QuizAnswer),
   score: Schema.Number,
   maxScore: Schema.Number,
@@ -196,8 +296,7 @@ export type GradedQuizAttempt = typeof GradedQuizAttempt.Type;
 export const UngradedTestAttempt = Schema.Struct({
   artifactKind: Schema.Literal("test"),
   status: Schema.Literal("ungraded"),
-  id: Schema.String,
-  artifactId: Schema.String,
+  ...attemptBase,
   answers: Schema.Array(TestAnswer)
 });
 export type UngradedTestAttempt = typeof UngradedTestAttempt.Type;
@@ -205,8 +304,7 @@ export type UngradedTestAttempt = typeof UngradedTestAttempt.Type;
 export const GradedTestAttempt = Schema.Struct({
   artifactKind: Schema.Literal("test"),
   status: Schema.Literal("graded"),
-  id: Schema.String,
-  artifactId: Schema.String,
+  ...attemptBase,
   answers: Schema.Array(TestAnswer),
   score: Schema.Number,
   maxScore: Schema.Number,

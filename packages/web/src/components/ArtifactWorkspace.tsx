@@ -66,11 +66,26 @@ function ArtifactContent({ artifact }: { readonly artifact: Artifact }) {
   }
 }
 
+/** Where the artifact comes from, when the tutor recorded it. */
+function ArtifactProvenance({ artifact }: { readonly artifact: Artifact }) {
+  if (artifact.source === undefined) {
+    return null;
+  }
+  const pages = artifact.source.pages;
+  return (
+    <p className="mb-6 text-slate-400 text-sm">
+      Basado en <span className="text-slate-200">{artifact.source.materialId}</span>
+      {pages.length > 0 && <>, {pages.length === 1 ? "página" : "páginas"} {pages.join(", ")}</>}
+    </p>
+  );
+}
+
 function NoteViewer({ artifact }: { readonly artifact: Extract<Artifact, { readonly kind: "note" }> }) {
   return (
     <article className="mx-auto max-w-4xl rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/30">
-      <p className="mb-2 font-bold text-sky-400 text-xs uppercase tracking-widest">Note</p>
-      <h2 className="mb-6 font-bold text-3xl text-slate-100">{artifact.title}</h2>
+      <p className="mb-2 font-bold text-sky-400 text-xs uppercase tracking-widest">Nota</p>
+      <h2 className="mb-2 font-bold text-3xl text-slate-100">{artifact.title}</h2>
+      <ArtifactProvenance artifact={artifact} />
       <div className="prose prose-invert max-w-none">
         <Streamdown>{artifact.markdown}</Streamdown>
       </div>
@@ -117,8 +132,9 @@ function ExerciseSolver({ artifact }: { readonly artifact: Extract<Artifact, { r
     <article className="mx-auto max-w-4xl">
       <header className="mb-5 rounded-3xl border border-slate-800 bg-slate-900 p-6">
         <p className="mb-2 font-bold text-sky-400 text-xs uppercase tracking-widest">{artifact.kind}</p>
-        <h2 className="font-bold text-3xl text-slate-100">{artifact.title}</h2>
-        <p className="mt-2 text-slate-400">Answer every question, submit, and review your corrections.</p>
+        <h2 className="mb-2 font-bold text-3xl text-slate-100">{artifact.title}</h2>
+        <ArtifactProvenance artifact={artifact} />
+        <p className="text-slate-400">Responde todas las preguntas, envía y revisa las correcciones.</p>
       </header>
 
       <div className="grid gap-4">

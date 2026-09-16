@@ -59,6 +59,8 @@ POST /api/artifacts/:id/submit
 
 ## Tipos de artifact
 
+Todo artifact puede llevar `source: { materialId, pages }` (de qué material y páginas se generó) y `createdAt`; los intentos llevan `createdAt`. Ambos son opcionales para que los ficheros anteriores sigan siendo válidos.
+
 - `note`: contenido markdown.
 - `quiz`: preguntas cerradas.
 - `test`: preguntas cerradas o `short-answer`.
