@@ -1,6 +1,7 @@
 import { Data, Effect, Schema } from "effect";
 import * as AgentCli from "../harness/index.ts";
 import { renderedPagesOf } from "../harness/grounding.ts";
+import { currentFolder, inScope } from "../../folders/folder.ts";
 import type { MaterialRepository } from "../../materials/material.ts";
 import { normalizeDiagramInput, renderDiagramIssues, validateDiagram } from "../../artifacts/diagram.ts";
 import {
@@ -183,11 +184,13 @@ export const makeArtifactCommands = (repository: ArtifactRepository, materials: 
           AgentCli.Argument.withDescription("Optional artifact kind filter")
         )
       }, ({ kind }) =>
-        repository.listArtifacts(kind === undefined ? {} : { kind }).pipe(
-          Effect.map((artifacts) => artifacts.length === 0
+        Effect.gen(function* () {
+          const folderId = yield* currentFolder;
+          const artifacts = yield* repository.listArtifacts({ ...(kind === undefined ? {} : { kind }), ...(folderId === undefined ? {} : { folderId }) });
+          return artifacts.length === 0
             ? "No artifacts found."
-            : artifacts.map((artifact) => `- ${artifact.id}: ${artifact.title} (${artifact.kind})`).join("\n")
-          ),
+            : artifacts.map((artifact) => `- ${artifact.id}: ${artifact.title} (${artifact.kind})`).join("\n");
+        }).pipe(
           Effect.catch((error) => Effect.succeed(renderArtifactError(error)))
         )
       )
@@ -201,8 +204,11 @@ export const makeArtifactCommands = (repository: ArtifactRepository, materials: 
       AgentCli.Command.exec("show", {
         artifactId: AgentCli.Argument.string("artifactId")
       }, ({ artifactId }) =>
-        repository.getArtifact(artifactId).pipe(
-          Effect.map(renderArtifact),
+        Effect.gen(function* () {
+          const artifact = yield* repository.getArtifact(artifactId);
+          const scope = yield* currentFolder;
+          return inScope(scope, artifact) ? renderArtifact(artifact) : `Artifact ${artifactId} is in another folder and is not available in this conversation.`;
+        }).pipe(
           Effect.catch((error) => Effect.succeed(renderArtifactError(error)))
         )
       )
@@ -227,7 +233,7 @@ export const makeArtifactCommands = (repository: ArtifactRepository, materials: 
       }, ({ json }) =>
         decodeCreateArtifactInput(json).pipe(
           Effect.flatMap((input) => checkDiagram(input, materials)),
-          Effect.flatMap((input) => repository.createArtifact(input)),
+          Effect.flatMap((input) => currentFolder.pipe(Effect.flatMap((folderId) => repository.createArtifact(input, folderId === undefined ? {} : { folderId })))),
           // A compact confirmation: the model already knows the content it sent,
           // and echoing it back invites repeating it to the student.
           Effect.map(renderCreatedArtifact),

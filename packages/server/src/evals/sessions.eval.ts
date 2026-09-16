@@ -12,6 +12,7 @@ import {
 import { TutorChatService, TutorChatServiceLive } from "../domain/agents/academic-tutor/tutor-chat-service.ts";
 import { ArtifactRepository } from "../domain/artifacts/artifact.ts";
 import { MaterialNotFound, MaterialRepository, type PdfMaterial } from "../domain/materials/material.ts";
+import { FolderNotFound, FolderRepository, generalFolder } from "../domain/folders/folder.ts";
 
 /**
  * Deterministic eval (no API calls): the conversation is persisted on the
@@ -38,6 +39,15 @@ const fixtureMaterial: PdfMaterial = {
   pageCount: 12,
   uploadedAt: "2026-01-01T00:00:00.000Z"
 };
+
+// Folders are not what this eval measures: every conversation lives in General.
+const GeneralOnlyFolderRepository = Layer.succeed(FolderRepository, {
+  list: () => Effect.succeed([generalFolder]),
+  get: (id) => id === generalFolder.id ? Effect.succeed(generalFolder) : Effect.fail(new FolderNotFound({ folderId: id })),
+  create: () => Effect.die("not used"),
+  rename: () => Effect.die("not used"),
+  remove: () => Effect.die("not used")
+});
 
 const FixtureMaterialRepository = Layer.succeed(MaterialRepository, {
   list: () => Effect.succeed([fixtureMaterial]),
@@ -151,7 +161,12 @@ const sessionsCase = Effect.gen(function* () {
       && message.content.some((part) => part.type === "text" && part.text.includes("Tienes un material"))
     );
     const stored2 = yield* sessions.getSession("s1");
+    // Every turn tells the model which folder it works in (General for sessions without one).
+    const folderNote = (turn2Prompt?.prompt.content ?? []).some((message) =>
+      message.role === "system" && typeof message.content === "string" && message.content.includes('FOLDER: the student is working in the folder "General"')
+    );
     results.push(
+      criterion("turn-note-names-the-folder", folderNote, "system note carries the folder name"),
       criterion("turn2-model-saw-stored-history", sawPreviousAnswer, "turn 2 prompt includes turn 1 answer loaded from the store"),
       criterion("turn2-persisted", stored2.messages.length === 6 && response.output.includes("empecemos"), `stored messages: ${stored2.messages.length}`)
     );
@@ -172,7 +187,7 @@ const sessionsCase = Effect.gen(function* () {
     results.push(criterion("list-has-summary-with-preview", list.length === 1 && list[0]?.preview === "Lista mis materiales" && list[0]?.messageCount === 6, JSON.stringify(list[0])));
   });
 
-  const dependencies = Layer.mergeAll(FixtureMaterialRepository, UnusedArtifactRepository, InMemorySessionRepository);
+  const dependencies = Layer.mergeAll(FixtureMaterialRepository, UnusedArtifactRepository, InMemorySessionRepository, GeneralOnlyFolderRepository);
   yield* program.pipe(
     Effect.provide(Layer.mergeAll(
       TutorChatServiceLive.pipe(Layer.provide(dependencies)),

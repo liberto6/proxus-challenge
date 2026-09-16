@@ -1,5 +1,6 @@
 import { Effect } from "effect";
 import * as AgentCli from "../harness/index.ts";
+import { currentFolder, inScope } from "../../folders/folder.ts";
 import {
   InvalidPageRange,
   MaterialNotFound,
@@ -24,16 +25,17 @@ export const makeMaterialCommands = (repository: MaterialRepository) => {
   ])(
     AgentCli.Command.withDescription("List the user's uploaded PDF materials")(
       AgentCli.Command.exec("list", {}, () =>
-        repository.list().pipe(
-          Effect.map((materials) => {
-            if (materials.length === 0) {
-              return "No PDF materials found.";
-            }
+        Effect.gen(function* () {
+          const scope = yield* currentFolder;
+          const materials = (yield* repository.list()).filter((material) => inScope(scope, material));
+          if (materials.length === 0) {
+            return scope === undefined ? "No PDF materials found." : "No PDF materials found in this folder.";
+          }
 
-            return materials.map((material) =>
-              `- ${material.id}: ${material.title} (${material.pageCount} pages, file: ${material.fileName})`
-            ).join("\n");
-          }),
+          return materials.map((material) =>
+            `- ${material.id}: ${material.title} (${material.pageCount} pages, file: ${material.fileName})`
+          ).join("\n");
+        }).pipe(
           Effect.catch((error) => Effect.succeed(renderMaterialError(error)))
         )
       )
@@ -56,8 +58,18 @@ export const makeMaterialCommands = (repository: MaterialRepository) => {
           )
         )
       }, ({ materialId, pages }) =>
-        parsePageSelection(pages).pipe(
-          Effect.andThen((parsedPages) => repository.renderPages(materialId, parsedPages)),
+        Effect.gen(function* () {
+          const parsedPages = yield* parsePageSelection(pages);
+          // Only the folder's materials can be read: the tutor never reaches another folder's PDF.
+          const scope = yield* currentFolder;
+          if (scope !== undefined) {
+            const material = yield* repository.get(materialId);
+            if (!inScope(scope, material)) {
+              return `Material ${materialId} is not in this folder. Only the materials listed by \`materials list\` are available in this conversation; tell the student the PDF is in another folder.`;
+            }
+          }
+          return yield* repository.renderPages(materialId, parsedPages);
+        }).pipe(
           Effect.catch((error) => Effect.succeed(renderMaterialError(error)))
         )
       )

@@ -7,6 +7,7 @@ import { AgentSession, SessionNotFound, SessionRepository, type AgentMessage } f
 import { makeAcademicTutorHarness } from "../academic-tutor.ts";
 import { describeUiContext } from "./ui-context.ts";
 import { tutorOptions } from "./tutor-options.ts";
+import { FolderRepository, FolderScope, folderOf, inScope } from "../../folders/folder.ts";
 
 /**
  * Runs tutor turns against a persisted session.
@@ -35,6 +36,7 @@ export const TutorChatServiceLive = Layer.effect(
     const materialRepository = yield* MaterialRepository;
     const artifactRepository = yield* ArtifactRepository;
     const sessions = yield* SessionRepository;
+    const folders = yield* FolderRepository;
     const harness = makeAcademicTutorHarness(materialRepository, artifactRepository, yield* tutorOptions);
     const session = AgentSession.make(harness);
 
@@ -54,16 +56,34 @@ export const TutorChatServiceLive = Layer.effect(
             Effect.catch(() => Effect.succeed(undefined))
           );
 
+    // The folder the conversation lives in: the tutor sees only its materials.
+    // The note names it so the tutor can say "in this folder" instead of "you have no materials".
+    const folderNote = (folderId: string): Effect.Effect<string> => Effect.gen(function* () {
+      const folder = yield* folders.get(folderId).pipe(Effect.catch(() => Effect.succeed({ id: folderId, title: folderId })));
+      const count = (yield* materialRepository.list().pipe(Effect.catch(() => Effect.succeed([])))).filter((material) => inScope(folderId, material)).length;
+      return `FOLDER: the student is working in the folder "${folder.title}" (${count} material(s)). Only that folder's materials and artifacts are available; PDFs of other folders cannot be read from this conversation.`;
+    });
+
+    const turnNotes = (input: TutorChatRequest, folderId: string): Effect.Effect<string> => Effect.gen(function* () {
+      const folder = yield* folderNote(folderId);
+      const ui = yield* uiContextNote(input);
+      return ui === undefined ? folder : `${folder}\n\n${ui}`;
+    });
+
     return {
       sendMessage: (input) => Effect.gen(function* () {
         const stored = yield* sessions.getSession(input.sessionId);
-        const systemNote = yield* uiContextNote(input);
+        const folderId = folderOf(stored);
+        const systemNote = yield* turnNotes(input, folderId);
         const result = yield* session.run({
           input: input.input,
           messages: stored.messages,
           maxSteps: input.maxSteps ?? 8,
-          ...(systemNote === undefined ? {} : { systemNote })
-        }).pipe(Effect.provide(harness.layer));
+          systemNote
+        }).pipe(
+          Effect.provide(harness.layer),
+          Effect.provideService(FolderScope, { folderId })
+        );
 
         if (turnCompleted(result.newMessages)) {
           yield* persistTurn(input.sessionId, result.newMessages);
@@ -74,7 +94,8 @@ export const TutorChatServiceLive = Layer.effect(
 
       streamMessage: (input) => Stream.unwrap(Effect.gen(function* () {
         const stored = yield* sessions.getSession(input.sessionId);
-        const systemNote = yield* uiContextNote(input);
+        const folderId = folderOf(stored);
+        const systemNote = yield* turnNotes(input, folderId);
         const turnMessages: AgentMessage[] = [];
         let failed = false;
 
@@ -89,7 +110,7 @@ export const TutorChatServiceLive = Layer.effect(
           input: input.input,
           messages: stored.messages,
           maxSteps: input.maxSteps ?? 8,
-          ...(systemNote === undefined ? {} : { systemNote })
+          systemNote
         }).pipe(
           Stream.tap((event) => Effect.sync(() => {
             if (event.type === "message") {
@@ -100,7 +121,8 @@ export const TutorChatServiceLive = Layer.effect(
           })),
           Stream.map((event): TutorChatStreamEvent => event),
           Stream.concat(Stream.fromEffect(finish)),
-          Stream.provide(harness.layer)
+          Stream.provide(harness.layer),
+          Stream.provideService(FolderScope, { folderId })
         );
       }))
     };

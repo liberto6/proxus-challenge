@@ -1,5 +1,5 @@
-import { Context, Data, Effect } from "effect";
-import { folderTitleLimits, generalFolderId, generalFolderTitle, type Folder } from "@proxus/shared";
+import { Context, Data, Effect, Option } from "effect";
+import { folderOf, folderTitleLimits, generalFolderId, generalFolderTitle, type Folder } from "@proxus/shared";
 
 /**
  * Folders group materials, conversations and practice. Membership lives on
@@ -36,6 +36,26 @@ export interface FolderRepository {
 }
 
 export const FolderRepository = Context.Service<FolderRepository>("@proxus/server/folders/FolderRepository");
+
+/**
+ * The folder a tutor turn works in. The chat service provides it from the
+ * conversation's folder; commands filter what they list and refuse what lies
+ * outside. Without it (CLI, older evals) nothing is filtered.
+ */
+export interface FolderScope {
+  readonly folderId: string;
+}
+
+export const FolderScope = Context.Service<FolderScope>("@proxus/server/folders/FolderScope");
+
+/** The folder of the current turn, or `undefined` when the turn is not scoped. */
+export const currentFolder: Effect.Effect<string | undefined> = Effect.serviceOption(FolderScope).pipe(
+  Effect.map((scope) => Option.isSome(scope) ? scope.value.folderId : undefined)
+);
+
+/** Whether an item belongs to the scope (`undefined` scope admits everything). */
+export const inScope = (scope: string | undefined, item: { readonly folderId?: string | undefined }): boolean =>
+  scope === undefined || folderOf(item) === scope;
 
 /** The General folder as shown when nothing has been stored for it yet. */
 export const generalFolder: Folder = { id: generalFolderId, title: generalFolderTitle, createdAt: "1970-01-01T00:00:00.000Z" };
