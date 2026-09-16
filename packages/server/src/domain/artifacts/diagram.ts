@@ -37,7 +37,16 @@ export type DiagramIssueCode =
   | "concept-map-root"
   | "concept-map-edge-label"
   | "concept-map-unreachable"
-  | "degenerate-list";
+  | "degenerate-list"
+  | "node-sublabel"
+  | "node-kind"
+  | "transition-labels"
+  | "density"
+  | "outline-like"
+  | "group-members"
+  | "card-shape"
+  | "view-focus"
+  | "timeline-phases";
 
 export interface DiagramValidationContext {
   /** Pages of the source material; when known, cited pages must be within 1..pageCount. */
@@ -207,12 +216,27 @@ export const validateDiagram = (
       ? `The diagram has ${input.nodes.length} node(s); it needs at least ${limits.nodes.min}. A structure with fewer concepts is better explained as text.`
       : `The diagram has ${input.nodes.length} nodes; the maximum is ${limits.nodes.max}. Merge or drop minor concepts; keep the ${limits.nodes.max} that matter.`));
   }
+  const sequential = input.diagramType === "process" || input.diagramType === "timeline";
+  const stepIds = new Set(input.mainPath ?? []);
   for (const node of input.nodes) {
     if (node.label.length < limits.label.min || node.label.length > limits.label.max) {
       issues.push(issue("label-length", `Label of node "${node.id}" has ${node.label.length} characters; it must have ${limits.label.min}-${limits.label.max}.`));
     }
     if (node.description.length < limits.description.min || node.description.length > limits.description.max) {
       issues.push(issue("description-length", `Description of node "${node.id}" has ${node.description.length} characters; it must have ${limits.description.min}-${limits.description.max}. Say what the material explains about it.`));
+    }
+    // The one-line "what it is" shown inside the box.
+    const sublabel = node.sublabel ?? "";
+    if (sublabel.length < limits.sublabel.min || sublabel.length > limits.sublabel.max) {
+      issues.push(issue("node-sublabel", sublabel.length === 0
+        ? `Node "${node.id}" has no sublabel. Add one line (${limits.sublabel.min}-${limits.sublabel.max} characters) saying what the concept is, e.g. "líquido → vapor por el calor del sol".`
+        : `Sublabel of node "${node.id}" has ${sublabel.length} characters; it must have ${limits.sublabel.min}-${limits.sublabel.max}.`));
+    }
+    if (node.kind === "formula" && (node.formula === undefined || node.formula.trim().length === 0)) {
+      issues.push(issue("node-kind", `Node "${node.id}" is a formula but has no "formula" text. Add the expression, e.g. "Tiempo de CPU = IC × CPI × Tc".`));
+    }
+    if (sequential && stepIds.has(node.id) && node.kind !== undefined && node.kind !== "step") {
+      issues.push(issue("node-kind", `Node "${node.id}" is a step of mainPath, so its kind must be "step" (it is "${node.kind}"). Agents, conditions and concepts go beside the path, not on it.`));
     }
   }
   if (input.summary.length < limits.summary.min || input.summary.length > limits.summary.max) {
@@ -276,7 +300,7 @@ export const validateDiagram = (
     touched.add(edge.to);
   }
 
-  if (input.diagramType === "process") {
+  if (sequential) {
     const pathIds = new Set(mainPath);
     const unknownSteps = mainPath.filter((id) => !ids.has(id));
     if (mainPath.length < 3 || unknownSteps.length > 0 || pathIds.size !== mainPath.length) {
@@ -284,7 +308,20 @@ export const validateDiagram = (
         ? `mainPath names "${unknownSteps.join("\", \"")}", which are not node ids. Valid ids: ${validIds}.`
         : pathIds.size !== mainPath.length
           ? `mainPath repeats a step. List each step once, in order; set "cyclic": true if the last step leads back to the first.`
-          : `A process needs "mainPath": the ordered ids of at least 3 steps. It has ${mainPath.length}.`));
+          : `A ${input.diagramType} needs "mainPath": the ordered ids of at least 3 steps. It has ${mainPath.length}.`));
+    }
+    // Every stretch of the path should state its cause: an edge between the two steps, labelled.
+    if (mainPath.length >= 3 && unknownSteps.length === 0) {
+      const stretches: string[] = [];
+      for (let index = 0; index < mainPath.length; index++) {
+        const next = index < mainPath.length - 1 ? mainPath[index + 1] : input.cyclic === true ? mainPath[0] : undefined;
+        if (next !== undefined) stretches.push(`${mainPath[index]}->${next}`);
+      }
+      const labelled = new Set(input.edges.filter((edge) => edge.label !== undefined && edge.label.trim().length > 0).map((edge) => `${edge.from}->${edge.to}`));
+      const missing = stretches.filter((stretch) => !labelled.has(stretch));
+      if (stretches.length > 0 && missing.length > Math.floor(stretches.length * 0.2)) {
+        issues.push(issue("transition-labels", `${stretches.length - missing.length} of ${stretches.length} steps of mainPath explain why the next step happens. Add an edge between consecutive steps with the cause, e.g. {"from":"${missing[0]!.split("->")[0]}","to":"${missing[0]!.split("->")[1]}","label":"el vapor se enfría en altura"}; at least ${Math.ceil(stretches.length * 0.8)} of ${stretches.length} are needed.`));
+      }
     }
     input.edges.forEach((edge, index) => {
       if (edge.label === undefined || edge.label.trim().length === 0) {
@@ -296,9 +333,37 @@ export const validateDiagram = (
         issues.push(issue("node-disconnected", `Node "${node.id}" is neither a step of mainPath nor connected by an edge. Connect it or drop it.`));
       }
     }
-    // More loose concepts than steps: the process is not what the diagram shows.
-    if (input.nodes.length >= limits.nodes.min && mainPath.length >= 3 && mainPath.length * 2 < input.nodes.length) {
-      issues.push(issue("degenerate-list", `Only ${mainPath.length} of ${input.nodes.length} nodes are steps of the process; the rest are loose concepts. This is a list, not a structure: create a \`note\` instead, or make the steps the diagram.`));
+    // More concepts hanging loose (not tied to a step, directly or through a group) than steps:
+    // the process is not what the diagram shows.
+    const attached = new Set<string>(pathIds);
+    const groupsOf = new Map<string, readonly string[]>();
+    for (const group of input.groups ?? []) {
+      for (const member of group.nodeIds) groupsOf.set(member, group.nodeIds);
+    }
+    for (const node of input.nodes) {
+      if (pathIds.has(node.id)) continue;
+      const linkedToStep = input.edges.some((edge) => (edge.from === node.id && pathIds.has(edge.to)) || (edge.to === node.id && pathIds.has(edge.from)));
+      const groupedWithStep = (groupsOf.get(node.id) ?? []).some((member) => pathIds.has(member));
+      if (linkedToStep || groupedWithStep) attached.add(node.id);
+    }
+    const loose = input.nodes.length - attached.size;
+    if (input.nodes.length >= limits.nodes.min && mainPath.length >= 3 && loose > mainPath.length) {
+      issues.push(issue("degenerate-list", `${loose} of ${input.nodes.length} nodes are neither steps nor tied to a step; the process is not what the diagram shows. Put the list in a card, or connect each concept to the step it belongs to.`));
+    }
+    if (input.diagramType === "timeline") {
+      const phases = input.phases ?? [];
+      const unique = new Set(phases);
+      const withoutPhase = mainPath.filter((id) => {
+        const phase = input.nodes.find((node) => node.id === id)?.phase;
+        return phase === undefined || !unique.has(phase);
+      });
+      if (phases.length === 0 || unique.size !== phases.length || withoutPhase.length > 0) {
+        issues.push(issue("timeline-phases", phases.length === 0
+          ? `A timeline needs "phases": the ordered list of periods or stages, and every step of mainPath names one in "phase".`
+          : unique.size !== phases.length
+            ? `"phases" repeats a name. List each phase once, in order.`
+            : `Step(s) ${withoutPhase.map((id) => `"${id}"`).join(", ")} have no "phase" among ${phases.map((phase) => `"${phase}"`).join(", ")}.`));
+      }
     }
   } else {
     const root = input.rootId;
@@ -323,12 +388,93 @@ export const validateDiagram = (
         issues.push(issue("concept-map-unreachable", `Node(s) ${unreachable.map((node) => `"${node.id}"`).join(", ")} are not connected to the root "${root}" through any chain of edges.`));
       }
       if (isStarList(root, input)) {
-        issues.push(issue("degenerate-list", `Every edge goes from "${root}" to a leaf with the same label and the leaves are unrelated to each other. This is a list, not a structure: create a \`note\` instead, or add the relations between the concepts.`));
+        issues.push(issue("degenerate-list", `Every edge goes from "${root}" to a leaf with the same label and the leaves are unrelated to each other. This is a list, not a structure: put the list in a card, or add the relations between the concepts.`));
+      }
+    }
+    // A map with fewer relations than concepts, or with one relation repeated everywhere, is a table of contents.
+    if (input.nodes.length >= 5) {
+      const distinctLabels = new Set(input.edges.map((edge) => (edge.label ?? "").trim().toLocaleLowerCase()).filter((label) => label.length > 0));
+      if (input.edges.length < input.nodes.length - 1 || distinctLabels.size < 3) {
+        issues.push(issue("density", `${input.nodes.length} concepts with ${input.edges.length} relation(s) and ${distinctLabels.size} distinct label(s). A concept map needs at least ${input.nodes.length - 1} relations and 3 different kinds of relation ("depende de", "se calcula como", "es un tipo de").`));
       }
     }
   }
 
+  // The outline of the document is not knowledge: section titles joined by "incluye" or "contiene".
+  if (isOutlineLike(input)) {
+    issues.push(issue("outline-like", `Most relations are "incluye", "contiene", "trata" or "se compone de" and no node is a definition, quantity or formula: this maps the document outline. Draw the knowledge instead: quantities, formulas and definitions, and how they relate ("se calcula como", "depende de", "es inverso de").`));
+  }
+
+  // Groups, cards and views.
+  const groups = input.groups ?? [];
+  if (groups.length > limits.groups.max) {
+    issues.push(issue("group-members", `${groups.length} groups; the maximum is ${limits.groups.max}.`));
+  }
+  const groupIds = new Set<string>();
+  const grouped = new Map<string, string>();
+  for (const group of groups) {
+    if (groupIds.has(group.id)) issues.push(issue("group-members", `Group id "${group.id}" is used more than once.`));
+    groupIds.add(group.id);
+    const unknown = group.nodeIds.filter((id) => !ids.has(id));
+    if (unknown.length > 0) issues.push(issue("group-members", `Group "${group.id}" names ${unknown.map((id) => `"${id}"`).join(", ")}, which are not node ids.`));
+    if (group.nodeIds.length < limits.groups.members.min || group.nodeIds.length > limits.groups.members.max) {
+      issues.push(issue("group-members", `Group "${group.id}" has ${group.nodeIds.length} member(s); it needs ${limits.groups.members.min}-${limits.groups.members.max}.`));
+    }
+    for (const member of group.nodeIds) {
+      const other = grouped.get(member);
+      if (other !== undefined && other !== group.id) issues.push(issue("group-members", `Node "${member}" is in groups "${other}" and "${group.id}"; a node belongs to one group.`));
+      grouped.set(member, group.id);
+    }
+  }
+
+  const cards = input.cards ?? [];
+  const cardsRequired = input.diagramType === "concept-map" || sourcePages.size >= 3;
+  if (cards.length === 0 && cardsRequired) {
+    issues.push(issue("card-shape", `Add 1-${limits.cards.max} "cards" under the drawing with what does not fit in boxes: key points, definitions and formulas, dates. Each card: {"title","items":[..],"pages":[..]}.`));
+  }
+  if (cards.length > limits.cards.max) {
+    issues.push(issue("card-shape", `${cards.length} cards; the maximum is ${limits.cards.max}.`));
+  }
+  cards.forEach((card, index) => {
+    if (card.title.trim().length === 0 || card.title.length > limits.cards.title.max) {
+      issues.push(issue("card-shape", `Card ${index + 1} needs a title of at most ${limits.cards.title.max} characters.`));
+    }
+    if (card.items.length < limits.cards.items.min || card.items.length > limits.cards.items.max) {
+      issues.push(issue("card-shape", `Card ${index + 1} ("${card.title}") has ${card.items.length} item(s); it needs ${limits.cards.items.min}-${limits.cards.items.max}.`));
+    }
+    const long = card.items.filter((item) => item.length > limits.cards.item.max);
+    if (long.length > 0) issues.push(issue("card-shape", `Card ${index + 1} ("${card.title}") has ${long.length} item(s) longer than ${limits.cards.item.max} characters.`));
+    const outside = card.pages.filter((page) => !sourcePages.has(page));
+    if (card.pages.length === 0 || outside.length > 0) {
+      issues.push(issue("card-shape", card.pages.length === 0
+        ? `Card ${index + 1} ("${card.title}") cites no pages. Every card cites the page(s) its items come from.`
+        : `Card ${index + 1} ("${card.title}") cites page(s) ${formatPages(outside)}, which are not in source.pages.`));
+    }
+  });
+
+  const views = input.views ?? [];
+  if (views.length > limits.views.max) {
+    issues.push(issue("view-focus", `${views.length} views; the maximum is ${limits.views.max}.`));
+  }
+  views.forEach((view, index) => {
+    const unknown = view.focus.filter((id) => !ids.has(id));
+    if (unknown.length > 0) issues.push(issue("view-focus", `View ${index + 1} ("${view.label}") focuses ${unknown.map((id) => `"${id}"`).join(", ")}, which are not node ids.`));
+    if (view.focus.length < limits.views.focus.min || view.focus.length > limits.views.focus.max) {
+      issues.push(issue("view-focus", `View ${index + 1} ("${view.label}") focuses ${view.focus.length} node(s); it needs ${limits.views.focus.min}-${limits.views.focus.max}.`));
+    }
+  });
+
   return issues;
+};
+
+const outlineLabels = new Set(["incluye", "contiene", "trata", "trata de", "se compone de", "tiene", "abarca", "consta de", "incluye enfoque", "aborda"]);
+
+/** Section titles joined by "incluye"/"contiene", with no definition, quantity or formula: the document's outline. */
+const isOutlineLike = (input: CreateDiagramArtifactInput): boolean => {
+  if (input.edges.length < 3) return false;
+  const outline = input.edges.filter((edge) => outlineLabels.has((edge.label ?? "").trim().toLocaleLowerCase())).length;
+  const knowledge = input.nodes.some((node) => node.kind === "definition" || node.kind === "quantity" || node.kind === "formula");
+  return outline >= Math.ceil(input.edges.length * 0.6) && !knowledge;
 };
 
 const reachableFrom = (root: string, edges: CreateDiagramArtifactInput["edges"]): ReadonlySet<string> => {

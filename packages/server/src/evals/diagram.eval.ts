@@ -64,8 +64,12 @@ const fixtureMaterial: PdfMaterial = {
 const node = (id: string, label: string, pages: readonly number[], description = `${label}: fase del ciclo del agua descrita en el material.`) =>
   ({ id, label, description, pages });
 
-/** The water cycle as a process: four steps in a loop plus two side concepts. */
-const validProcess: CreateDiagramArtifactInput = {
+type NodeInput = CreateDiagramArtifactInput["nodes"][number];
+const rich = (id: string, label: string, sublabel: string, kind: NodeInput["kind"], pages: readonly number[], description: string): NodeInput =>
+  ({ id, label, sublabel, kind, pages, description });
+
+/** The water cycle as a v1 process (no sublabels, no transitions): kept to check compatibility. */
+const v1Process: CreateDiagramArtifactInput = {
   kind: "diagram",
   title: "El ciclo del agua: fases",
   diagramType: "process",
@@ -87,6 +91,43 @@ const validProcess: CreateDiagramArtifactInput = {
   ]
 };
 
+/** The water cycle as a v2 process: causes on every stretch, agents, a sub-step group, cards and views. */
+const validProcess: CreateDiagramArtifactInput = {
+  kind: "diagram",
+  title: "El ciclo del agua: fases",
+  diagramType: "process",
+  summary: "Las cuatro fases del ciclo del agua se encadenan en un bucle: evaporación, condensación, precipitación y recolección.",
+  source: { materialId, pages: [1, 2, 3] },
+  nodes: [
+    rich("evaporacion", "Evaporación", "líquido → vapor por el calor del sol", "step", [1], "El calor del sol convierte el agua líquida de océanos, ríos y lagos en vapor que sube a la atmósfera."),
+    rich("condensacion", "Condensación", "vapor → gotas; forma las nubes", "step", [1], "El vapor se enfría en altura y forma nubes compuestas por gotas diminutas."),
+    rich("precipitacion", "Precipitación", "las gotas caen como lluvia, nieve o granizo", "step", [2], "Cuando las gotas crecen, caen como lluvia, nieve o granizo según la temperatura."),
+    rich("recoleccion", "Recolección", "el agua vuelve al mar o al subsuelo", "step", [2], "El agua vuelve a océanos y lagos (escorrentía) o se filtra al subsuelo formando acuíferos (infiltración)."),
+    rich("sol", "Sol", "fuente de calor que evapora el agua", "agent", [1], "El calor del sol es lo que convierte el agua líquida en vapor en la fase de evaporación."),
+    rich("plantas", "Plantas", "aportan vapor por transpiración", "agent", [2], "Las plantas liberan vapor de agua (transpiración) que se suma al vapor procedente de la evaporación."),
+    rich("escorrentia", "Escorrentía", "agua que fluye por la superficie", "concept", [2, 3], "Agua que fluye por la superficie hacia ríos y mares."),
+    rich("infiltracion", "Infiltración", "agua que se filtra al subsuelo", "concept", [2], "Agua que se filtra al subsuelo a través del terreno y forma acuíferos.")
+  ],
+  mainPath: ["evaporacion", "condensacion", "precipitacion", "recoleccion"],
+  cyclic: true,
+  edges: [
+    { from: "evaporacion", to: "condensacion", label: "el vapor se enfría en altura" },
+    { from: "condensacion", to: "precipitacion", label: "las gotas crecen y pesan" },
+    { from: "precipitacion", to: "recoleccion", label: "el agua llega al suelo" },
+    { from: "recoleccion", to: "evaporacion", label: "el agua vuelve a calentarse" },
+    { from: "sol", to: "evaporacion", label: "calienta el agua" },
+    { from: "plantas", to: "condensacion", label: "aportan vapor" },
+    { from: "recoleccion", to: "escorrentia", label: "una vía es" },
+    { from: "recoleccion", to: "infiltracion", label: "otra vía es" }
+  ],
+  groups: [{ id: "destinos", label: "Destinos del agua", nodeIds: ["recoleccion", "escorrentia", "infiltracion"] }],
+  cards: [
+    { title: "Claves", items: ["Cuatro fases en bucle: evaporación, condensación, precipitación, recolección.", "Transpiración y sublimación aportan vapor extra."], pages: [1, 2] },
+    { title: "Fechas", items: ["Perrault (1674)", "Mariotte (1686)"], pages: [3] }
+  ],
+  views: [{ label: "Fases", focus: ["evaporacion", "condensacion", "precipitacion", "recoleccion"], note: "El bucle principal." }]
+};
+
 const validConceptMap: CreateDiagramArtifactInput = {
   kind: "diagram",
   title: "Recolección del agua",
@@ -95,23 +136,29 @@ const validConceptMap: CreateDiagramArtifactInput = {
   source: { materialId, pages: [2, 3] },
   rootId: "recoleccion",
   nodes: [
-    node("recoleccion", "Recolección", [2], "Fase en la que el agua vuelve a océanos y lagos o se filtra al subsuelo."),
-    node("escorrentia", "Escorrentía", [2, 3], "Agua que fluye por la superficie hacia ríos y mares."),
-    node("infiltracion", "Infiltración", [2], "Agua que se filtra al subsuelo a través del terreno."),
-    node("acuifero", "Acuífero", [2, 3], "Capa subterránea de roca permeable que almacena el agua infiltrada.")
+    rich("recoleccion", "Recolección", "el agua vuelve al mar o al subsuelo", "concept", [2], "Fase en la que el agua vuelve a océanos y lagos o se filtra al subsuelo."),
+    rich("escorrentia", "Escorrentía", "agua que fluye por la superficie", "definition", [2, 3], "Agua que fluye por la superficie hacia ríos y mares."),
+    rich("infiltracion", "Infiltración", "agua que se filtra al subsuelo", "definition", [2], "Agua que se filtra al subsuelo a través del terreno."),
+    rich("acuifero", "Acuífero", "capa de roca permeable que almacena agua", "definition", [2, 3], "Capa subterránea de roca permeable que almacena el agua infiltrada."),
+    rich("humedad", "Humedad relativa", "% de vapor respecto al máximo posible", "quantity", [3], "Porcentaje de vapor de agua respecto al máximo posible a esa temperatura.")
   ],
   edges: [
     { from: "recoleccion", to: "escorrentia", label: "una vía es" },
     { from: "recoleccion", to: "infiltracion", label: "otra vía es" },
-    { from: "infiltracion", to: "acuifero", label: "forma" }
-  ]
+    { from: "infiltracion", to: "acuifero", label: "forma" },
+    { from: "escorrentia", to: "humedad", label: "eleva la" }
+  ],
+  cards: [{ title: "Definiciones", items: ["Acuífero: capa subterránea de roca permeable que almacena agua.", "Escorrentía: agua que fluye por la superficie."], pages: [3] }]
 };
 
-const rendered12 = new Set([1, 2]);
-const context: DiagramValidationContext = { pageCount: 3, renderedPages: rendered12 };
+const rendered123 = new Set([1, 2, 3]);
+const context: DiagramValidationContext = { pageCount: 3, renderedPages: rendered123 };
 
-const codes = (input: CreateDiagramArtifactInput, ctx: DiagramValidationContext = context): readonly DiagramIssueCode[] =>
-  validateDiagram(input, ctx).map((issue) => issue.code);
+/** Issues of an input as the command sees it: normalized, decoded, validated. */
+const codes = (input: CreateDiagramArtifactInput, ctx: DiagramValidationContext = context): readonly DiagramIssueCode[] => {
+  const decoded = Schema.decodeUnknownSync(CreateDiagramArtifactInput)(normalizeDiagramInput(input));
+  return validateDiagram(decoded, ctx).map((issue) => issue.code);
+};
 
 const has = (list: readonly DiagramIssueCode[], code: DiagramIssueCode) => list.includes(code);
 
@@ -123,31 +170,107 @@ const validationCases = Effect.sync(() => {
   results.push(criterion("valid-process-accepted", codes(validProcess).length === 0, `issues: ${codes(validProcess).join(",")}`));
   results.push(criterion("valid-concept-map-accepted", codes(validConceptMap, { pageCount: 3, renderedPages: new Set([2, 3]) }).length === 0, `issues: ${codes(validConceptMap, { pageCount: 3, renderedPages: new Set([2, 3]) }).join(",")}`));
 
-  const duplicate = codes({ ...validProcess, nodes: [...validProcess.nodes, node("condensacion", "Otra", [1], "Descripción repetida para forzar el duplicado de id.")] });
+  // A v1 diagram decodes, but a new one built like that is asked for causes; sublabels are derived.
+  const v1Codes = codes(v1Process);
+  results.push(criterion("v1-shape-needs-transitions-not-sublabels", has(v1Codes, "transition-labels") && !has(v1Codes, "node-sublabel"), v1Codes.join(",")));
+
+  const noSublabel = codes({ ...validProcess, nodes: validProcess.nodes.map((n) => n.id === "sol" ? { ...n, sublabel: "corto" } : n) });
+  results.push(criterion("sublabel-too-short", has(noSublabel, "node-sublabel"), noSublabel.join(",")));
+
+  const formulaWithoutText = codes({ ...validConceptMap, nodes: validConceptMap.nodes.map((n) => n.id === "humedad" ? { ...n, kind: "formula" as const } : n) }, { pageCount: 3, renderedPages: new Set([2, 3]) });
+  results.push(criterion("formula-needs-expression", has(formulaWithoutText, "node-kind"), formulaWithoutText.join(",")));
+
+  const agentOnPath = codes({ ...validProcess, nodes: validProcess.nodes.map((n) => n.id === "condensacion" ? { ...n, kind: "agent" as const } : n) });
+  results.push(criterion("agent-cannot-be-a-step", has(agentOnPath, "node-kind"), agentOnPath.join(",")));
+
+  const fewTransitions = codes({ ...validProcess, edges: validProcess.edges.filter((edge) => edge.label !== "las gotas crecen y pesan" && edge.label !== "el agua llega al suelo") });
+  results.push(criterion("transition-labels-below-80", has(fewTransitions, "transition-labels"), fewTransitions.join(",")));
+
+  const sparseMap = codes({ ...validConceptMap, edges: validConceptMap.edges.map((edge) => ({ ...edge, label: "una vía es" })) }, { pageCount: 3, renderedPages: new Set([2, 3]) });
+  results.push(criterion("density-too-low", has(sparseMap, "density"), sparseMap.join(",")));
+
+  const outline: CreateDiagramArtifactInput = {
+    ...validConceptMap,
+    title: "Tema 1",
+    rootId: "definicion",
+    nodes: [
+      rich("definicion", "Definición de arquitectura", "qué entendemos por arquitectura", "concept", [2], "Sección que define qué es la arquitectura de computadores y su alcance."),
+      rich("antiguo", "Punto de vista antiguo", "visión clásica del término", "concept", [2], "Sección sobre cómo se entendía la arquitectura en los primeros años."),
+      rich("moderno", "Visión moderna", "visión actual del término", "concept", [2], "Sección sobre la visión actual de la arquitectura de computadores."),
+      rich("cuantitativo", "Fundamentos cuantitativos", "métricas y ecuaciones", "concept", [3], "Sección con las métricas de rendimiento y la ecuación del tiempo de CPU."),
+      rich("cpu", "CPU Time", "tiempo de ejecución de un programa", "concept", [3], "Apartado que presenta la ecuación del tiempo de CPU.")
+    ],
+    edges: [
+      { from: "definicion", to: "antiguo", label: "incluye" },
+      { from: "definicion", to: "moderno", label: "incluye" },
+      { from: "definicion", to: "cuantitativo", label: "contiene" },
+      { from: "cuantitativo", to: "cpu", label: "trata" }
+    ]
+  };
+  const outlineCodes = codes(outline, { pageCount: 3, renderedPages: new Set([2, 3]) });
+  results.push(criterion("outline-like-rejected", has(outlineCodes, "outline-like"), outlineCodes.join(",")));
+  const knowledge = codes({
+    ...outline,
+    nodes: outline.nodes.map((n) => n.id === "cpu" ? { ...n, kind: "formula" as const, formula: "Tiempo de CPU = IC × CPI × Tc" } : n),
+    edges: [
+      { from: "definicion", to: "cuantitativo", label: "se mide con" },
+      { from: "cuantitativo", to: "cpu", label: "se calcula como" },
+      { from: "antiguo", to: "moderno", label: "evoluciona a" },
+      { from: "moderno", to: "cuantitativo", label: "se apoya en" }
+    ]
+  }, { pageCount: 3, renderedPages: new Set([2, 3]) });
+  results.push(criterion("knowledge-map-not-outline", !has(knowledge, "outline-like") && !has(knowledge, "density"), knowledge.join(",")));
+
+  const noCards = codes({ ...validConceptMap, cards: [] }, { pageCount: 3, renderedPages: new Set([2, 3]) });
+  results.push(criterion("cards-required-for-concept-map", has(noCards, "card-shape"), noCards.join(",")));
+  const badCardPages = codes({ ...validProcess, cards: [{ title: "Fechas", items: ["Perrault (1674)", "Mariotte (1686)"], pages: [7] }] });
+  results.push(criterion("card-pages-outside-source", has(badCardPages, "card-shape"), badCardPages.join(",")));
+
+  const overlappingGroups = codes({ ...validProcess, groups: [...(validProcess.groups ?? []), { id: "fuentes", label: "Fuentes", nodeIds: ["sol", "escorrentia"] }] });
+  results.push(criterion("group-overlap", has(overlappingGroups, "group-members"), overlappingGroups.join(",")));
+  const unknownMember = codes({ ...validProcess, groups: [{ id: "g", label: "G", nodeIds: ["sol", "nube"] }] });
+  results.push(criterion("group-unknown-member", has(unknownMember, "group-members"), unknownMember.join(",")));
+
+  const badView = codes({ ...validProcess, views: [{ label: "X", focus: ["sol", "nube"] }] });
+  results.push(criterion("view-unknown-focus", has(badView, "view-focus"), badView.join(",")));
+
+  const timeline: CreateDiagramArtifactInput = {
+    ...validProcess,
+    diagramType: "timeline",
+    cyclic: false,
+    phases: ["Siglo XVII", "Actualidad"],
+    nodes: validProcess.nodes.map((n) => n.kind === "step" ? { ...n, phase: n.id === "evaporacion" ? "Siglo XVII" : "Actualidad" } : n),
+    edges: validProcess.edges.filter((edge) => !(edge.from === "recoleccion" && edge.to === "evaporacion"))
+  };
+  results.push(criterion("timeline-valid", codes(timeline).length === 0, codes(timeline).join(",")));
+  const timelineNoPhase = codes({ ...timeline, nodes: timeline.nodes.map((n) => n.id === "precipitacion" ? { ...n, phase: "Edad Media" } : n) });
+  results.push(criterion("timeline-phase-missing", has(timelineNoPhase, "timeline-phases"), timelineNoPhase.join(",")));
+
+  const duplicate = codes({ ...validProcess, nodes: [...validProcess.nodes, rich("condensacion", "Otra", "descripción repetida para el duplicado", "concept", [1], "Descripción repetida para forzar el duplicado de id.")] });
   results.push(criterion("duplicate-id", has(duplicate, "duplicate-node-id"), duplicate.join(",")));
 
-  const unknownEdge = codes({ ...validProcess, edges: [{ from: "nube", to: "condensacion", label: "forma" }] });
+  const unknownEdge = codes({ ...validProcess, edges: [...validProcess.edges, { from: "nube", to: "condensacion", label: "forma" }] });
   results.push(criterion("edge-unknown-node", has(unknownEdge, "edge-unknown-node"), unknownEdge.join(",")));
 
-  const noPages = codes({ ...validProcess, nodes: validProcess.nodes.map((n) => n.id === "sublimacion" ? { ...n, pages: [] } : n) });
+  const noPages = codes({ ...validProcess, nodes: validProcess.nodes.map((n) => n.id === "plantas" ? { ...n, pages: [] } : n) });
   results.push(criterion("node-no-pages", has(noPages, "node-no-pages"), noPages.join(",")));
 
-  const outsideSource = codes({ ...validProcess, nodes: validProcess.nodes.map((n) => n.id === "sublimacion" ? { ...n, pages: [3] } : n) });
+  const outsideSource = codes({ ...validProcess, nodes: validProcess.nodes.map((n) => n.id === "plantas" ? { ...n, pages: [7] } : n) }, { pageCount: 9, renderedPages: new Set([1, 2, 3]) });
   results.push(criterion("page-outside-source", has(outsideSource, "node-page-outside-source"), outsideSource.join(",")));
 
-  const outOfRange = codes({ ...validProcess, source: { materialId, pages: [1, 2, 7] } }, { pageCount: 3, renderedPages: new Set([1, 2, 7]) });
+  const outOfRange = codes({ ...validProcess, source: { materialId, pages: [1, 2, 3, 7] } }, { pageCount: 3, renderedPages: new Set([1, 2, 3, 7]) });
   results.push(criterion("page-out-of-range", has(outOfRange, "page-out-of-range"), outOfRange.join(",")));
 
-  const notRendered = codes({ ...validProcess, source: { materialId, pages: [1, 2, 3] } });
+  const notRendered = codes(validProcess, { pageCount: 3, renderedPages: new Set([1, 2]) });
   results.push(criterion("page-not-rendered", has(notRendered, "page-not-rendered") && !has(notRendered, "page-out-of-range"), notRendered.join(",")));
 
-  const noRenderInfo = codes({ ...validProcess, source: { materialId, pages: [1, 2, 3] } }, { pageCount: 3 });
+  const noRenderInfo = codes(validProcess, { pageCount: 3 });
   results.push(criterion("range-only-without-rendered-pages", noRenderInfo.length === 0, noRenderInfo.join(",")));
 
-  const disconnected = codes({ ...validProcess, edges: [validProcess.edges[0]!] });
+  const disconnected = codes({ ...validProcess, edges: validProcess.edges.filter((edge) => edge.from !== "sol") });
   results.push(criterion("disconnected-node", has(disconnected, "node-disconnected"), disconnected.join(",")));
 
-  const shortPath = codes({ ...validProcess, mainPath: ["evaporacion", "condensacion"] });
+  const shortPath = codes({ ...validProcess, mainPath: ["evaporacion", "condensacion"], groups: [] });
   results.push(criterion("main-path-too-short", has(shortPath, "process-main-path"), shortPath.join(",")));
 
   const unlabelled = codes({ ...validConceptMap, edges: validConceptMap.edges.map((edge, index) => index === 0 ? { from: edge.from, to: edge.to } : edge) }, { pageCount: 3, renderedPages: new Set([2, 3]) });
@@ -178,20 +301,22 @@ const validationCases = Effect.sync(() => {
   const starCodes = codes(star, { pageCount: 3, renderedPages: new Set([3]) });
   results.push(criterion("degenerate-star", has(starCodes, "degenerate-list"), starCodes.join(",")));
 
+  // Five concepts hanging off each other but never off a step: a list next to a process.
   const looseProcess = codes({
     ...validProcess,
-    nodes: [...validProcess.nodes, node("humedad", "Humedad relativa", [2]), node("acuifero", "Acuífero", [2]), node("escorrentia", "Escorrentía", [2]), node("infiltracion", "Infiltración", [2])],
+    nodes: [...validProcess.nodes, node("humedad", "Humedad relativa", [3]), node("acuifero", "Acuífero", [3]), node("perrault", "Perrault", [3]), node("mariotte", "Mariotte", [3]), node("teoria", "Teoría moderna", [3])],
     edges: [
       ...validProcess.edges,
-      { from: "humedad", to: "condensacion", label: "influye en" },
-      { from: "acuifero", to: "recoleccion", label: "resulta de" },
-      { from: "escorrentia", to: "recoleccion", label: "es una vía de" },
-      { from: "infiltracion", to: "recoleccion", label: "es una vía de" }
+      { from: "humedad", to: "acuifero", label: "se relaciona con" },
+      { from: "perrault", to: "teoria", label: "consolida" },
+      { from: "mariotte", to: "teoria", label: "consolida" },
+      { from: "teoria", to: "humedad", label: "explica" }
     ]
   });
   results.push(criterion("degenerate-process", has(looseProcess, "degenerate-list"), looseProcess.join(",")));
+  results.push(criterion("attached-concepts-are-not-degenerate", !has(codes(validProcess), "degenerate-list"), "agents and grouped sub-steps count as attached"));
 
-  const allAtOnce = codes({ ...validProcess, edges: [{ from: "nube", to: "condensacion", label: "forma" }], nodes: validProcess.nodes.map((n) => n.id === "sublimacion" ? { ...n, pages: [] } : n), source: { materialId, pages: [1, 2, 3] } });
+  const allAtOnce = codes({ ...validProcess, edges: [...validProcess.edges, { from: "nube", to: "condensacion", label: "forma" }], nodes: validProcess.nodes.map((n) => n.id === "plantas" ? { ...n, pages: [] } : n) }, { pageCount: 3, renderedPages: new Set([1, 2]) });
   results.push(criterion("all-issues-reported-at-once", has(allAtOnce, "edge-unknown-node") && has(allAtOnce, "node-no-pages") && has(allAtOnce, "page-not-rendered"), allAtOnce.join(",")));
 
   const normalized = normalizeDiagramInput({
@@ -215,7 +340,7 @@ const validationCases = Effect.sync(() => {
   results.push(criterion("normalize-derives-sublabel", normalized.nodes[0]?.sublabel === "El vapor se enfría en altura." && normalized.nodes[1]?.sublabel === "calienta el agua", `sublabels: ${normalized.nodes.map((node) => node.sublabel).join(" | ")}`));
   results.push(criterion("normalize-dedupes-group-members", normalized.groups[0]?.id === "aportes" && normalized.groups[0].nodeIds.length === 1, JSON.stringify(normalized.groups[0])));
 
-  const v1Diagram = Schema.decodeUnknownExit(CreateDiagramArtifactInput)(validProcess);
+  const v1Diagram = Schema.decodeUnknownExit(CreateDiagramArtifactInput)(v1Process);
   results.push(criterion("v1-diagram-still-decodes", v1Diagram._tag === "Success", v1Diagram._tag));
 
   return results;
@@ -307,9 +432,9 @@ const repairCases = Effect.gen(function* () {
   const results: CriterionResult[] = [];
 
   // A. view -> invalid create (unknown edge target) -> valid create -> answer.
-  const invalid: CreateDiagramArtifactInput = { ...validProcess, edges: [{ from: "nube", to: "condensacion", label: "forma" }, validProcess.edges[1]!] };
-  const a = yield* runScripted("Explícame las fases del ciclo del agua, páginas 1-2.", [
-    call("c1", `materials view ${materialId} 1-2`),
+  const invalid: CreateDiagramArtifactInput = { ...validProcess, edges: [...validProcess.edges, { from: "nube", to: "condensacion", label: "forma" }] };
+  const a = yield* runScripted("Explícame las fases del ciclo del agua, páginas 1-3.", [
+    call("c1", `materials view ${materialId} 1-3`),
     create("c2", invalid),
     create("c3", validProcess),
     text("He dibujado el ciclo con sus cuatro fases (páginas 1-2). Ábrelo desde el panel.")
@@ -320,10 +445,10 @@ const repairCases = Effect.gen(function* () {
   results.push(
     criterion("first-create-rejected-with-code", rejection !== undefined && rejection.includes("[edge-unknown-node]") && rejection.includes("\"nube\""), rejection?.split("\n")[1] ?? "no rejection"),
     criterion("rejection-lists-valid-ids", rejection !== undefined && rejection.includes("evaporacion, condensacion"), "valid ids listed"),
-    criterion("second-create-persisted", a.artifacts.length === 1 && a.artifacts[0]?.kind === "diagram" && a.artifacts[0].nodes.length === 6, `artifacts: ${a.artifacts.length}`),
-    criterion("persisted-source-matches-rendered", a.artifacts[0]?.source?.materialId === materialId && JSON.stringify(a.artifacts[0]?.source?.pages) === "[1,2]", JSON.stringify(a.artifacts[0]?.source)),
+    criterion("second-create-persisted", a.artifacts.length === 1 && a.artifacts[0]?.kind === "diagram" && a.artifacts[0].nodes.length === 8, `artifacts: ${a.artifacts.length}`),
+    criterion("persisted-source-matches-rendered", a.artifacts[0]?.source?.materialId === materialId && JSON.stringify(a.artifacts[0]?.source?.pages) === "[1,2,3]", JSON.stringify(a.artifacts[0]?.source)),
     criterion("two-create-calls-only", createCalls === 2 && a.modelCalls === 4, `create calls: ${createCalls}, model calls: ${a.modelCalls}`),
-    criterion("created-confirmation-has-node-count", aResults.some((item) => item.includes("\"nodeCount\": 6") && item.includes("\"edgeCount\": 2") && item.includes("\"diagramType\": \"process\"")), "confirmation carries nodeCount, edgeCount, diagramType"),
+    criterion("created-confirmation-has-node-count", aResults.some((item) => item.includes("\"nodeCount\": 8") && item.includes("\"edgeCount\": 8") && item.includes("\"diagramType\": \"process\"")), "confirmation carries nodeCount, edgeCount, diagramType"),
     criterion("no-draft-json-in-assistant-text", !a.result.output.includes("\"nodes\""), a.result.output.slice(0, 80))
   );
 
@@ -334,7 +459,7 @@ const repairCases = Effect.gen(function* () {
   ]);
   const bRejection = toolResults(b.result.messages).find((item) => item.startsWith("DIAGRAM_INVALID"));
   results.push(
-    criterion("create-without-view-rejected", bRejection !== undefined && bRejection.includes("[page-not-rendered]") && bRejection.includes(`materials view ${materialId} 1,2`) && b.artifacts.length === 0, bRejection?.split("\n")[1] ?? "no rejection")
+    criterion("create-without-view-rejected", bRejection !== undefined && bRejection.includes("[page-not-rendered]") && bRejection.includes(`materials view ${materialId} 1,2,3`) && b.artifacts.length === 0, bRejection?.split("\n")[1] ?? "no rejection")
   );
 
   // C. unknown material id -> rejected with a pointer to `materials list`.
@@ -347,7 +472,7 @@ const repairCases = Effect.gen(function* () {
 
   // D. an apostrophe inside the single-quoted JSON breaks tokenization; the model gets the error back.
   const d = yield* runScripted("Hazme un esquema.", [
-    call("f1", `materials view ${materialId} 1-2`),
+    call("f1", `materials view ${materialId} 1-3`),
     call("f2", `artifacts create '${JSON.stringify({ ...validProcess, title: "L'eau" })}'`),
     text("Lo corrijo.")
   ]);
@@ -375,7 +500,7 @@ const plumbingCases = Effect.sync(() => {
 
   const diagram = makeArtifact(validProcess);
   const note = diagram.kind === "diagram" ? describeUiContext(diagram, { openNodeId: "condensacion" }) : "";
-  results.push(criterion("ui-context-describes-node", note.includes("process diagram with 6 node(s)") && note.includes("Focused node condensacion") && note.includes("forma nubes") && note.includes("(pages 1)"), note.split("\n")[3] ?? ""));
+  results.push(criterion("ui-context-describes-node", note.includes("process diagram with 8 node(s)") && note.includes("Focused node condensacion") && note.includes("forma nubes") && note.includes("(pages 1)"), note.split("\n")[3] ?? ""));
 
   return results;
 });
