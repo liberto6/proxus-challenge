@@ -1,6 +1,6 @@
 import type { DiagramArtifact, DiagramNode } from "@proxus/shared";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { layoutDiagram, type DiagramLayout, type LayoutEdge, type LayoutNode } from "../domain/diagrams/layout.ts";
+import { layoutDiagram, splitTransitions, type DiagramLayout, type LayoutEdge, type LayoutNode } from "../domain/diagrams/layout.ts";
 import { toMermaid } from "../domain/diagrams/mermaid.ts";
 import { formatPages } from "../lib/format.ts";
 import { Icon } from "./icons.tsx";
@@ -510,18 +510,22 @@ export interface NodeRelation {
   readonly label: string | undefined;
 }
 
-/** Relations touching a node: implicit main-path steps first, then labelled edges. */
+/**
+ * Relations touching a node: main-path steps first (with the transition's
+ * cause when the diagram states it), then the other edges.
+ */
 export const relationsOf = (artifact: DiagramArtifact, nodeId: string): readonly NodeRelation[] => {
   const relations: NodeRelation[] = [];
   const path = artifact.mainPath ?? [];
+  const { transitions, edges } = splitTransitions(path, artifact.cyclic === true, artifact.edges);
   const index = path.indexOf(nodeId);
   if (index !== -1) {
     const previous = index > 0 ? path[index - 1] : artifact.cyclic ? path[path.length - 1] : undefined;
     const next = index < path.length - 1 ? path[index + 1] : artifact.cyclic ? path[0] : undefined;
-    if (previous !== undefined && previous !== nodeId) relations.push({ other: previous, direction: "in", label: "sigue a" });
-    if (next !== undefined && next !== nodeId) relations.push({ other: next, direction: "out", label: "sigue" });
+    if (previous !== undefined && previous !== nodeId) relations.push({ other: previous, direction: "in", label: transitions.get(`${previous}->${nodeId}`) ?? "sigue a" });
+    if (next !== undefined && next !== nodeId) relations.push({ other: next, direction: "out", label: transitions.get(`${nodeId}->${next}`) ?? "sigue" });
   }
-  for (const edge of artifact.edges) {
+  for (const edge of edges) {
     if (edge.from === nodeId) relations.push({ other: edge.to, direction: "out", label: edge.label });
     else if (edge.to === nodeId) relations.push({ other: edge.from, direction: "in", label: edge.label });
   }

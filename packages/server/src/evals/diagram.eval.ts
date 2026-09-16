@@ -1,7 +1,7 @@
 import { isMain } from "../lib/is-main.ts";
-import { Console, Data, Effect, Layer, Ref } from "effect";
+import { Console, Data, Effect, Layer, Ref, Schema } from "effect";
 import { LanguageModel, Response } from "effect/unstable/ai";
-import type { CreateDiagramArtifactInput } from "@proxus/shared";
+import { CreateDiagramArtifactInput } from "@proxus/shared";
 import { AgentHarness, AgentSession } from "../domain/agents/harness/index.ts";
 import { progressLabelFor } from "../domain/agents/harness/event.ts";
 import { academicTutorSystemPrompt } from "../domain/agents/academic-tutor.ts";
@@ -196,17 +196,27 @@ const validationCases = Effect.sync(() => {
 
   const normalized = normalizeDiagramInput({
     kind: "diagram",
-    nodes: [{ id: "Condensación", label: " Condensación ", description: "x", pages: 2 }],
+    nodes: [
+      { id: "Condensación", label: " Condensación ", description: "El vapor se enfría en altura. Forma nubes de gotas diminutas.", pages: 2 },
+      { id: "sol", label: "Sol", description: "Fuente de calor del ciclo.", pages: [1], sublabel: " calienta el agua " }
+    ],
     mainPath: ["Evaporación", "Condensación"],
     cyclic: true,
     edges: [
-      { from: "Evaporación", to: "Condensación", label: "sigue" },
+      { from: "Evaporación", to: "Condensación", label: "el vapor se enfría" },
       { from: "Transpiración", to: "Condensación", label: "aporta vapor" },
       { from: "Transpiración", to: "Condensación", label: "aporta vapor" }
-    ]
-  }) as { nodes: Array<{ id: string; label: string; pages: unknown }>; edges: unknown[]; mainPath: string[] };
-  results.push(criterion("normalize-single-page", JSON.stringify(normalized.nodes[0]?.pages) === "[2]" && normalized.nodes[0]?.id === "condensacion" && normalized.nodes[0]?.label === "Condensación", JSON.stringify(normalized.nodes[0])));
-  results.push(criterion("normalize-duplicate-edge", normalized.edges.length === 1 && normalized.mainPath[0] === "evaporacion", `edges: ${normalized.edges.length}, mainPath: ${normalized.mainPath.join(",")}`));
+    ],
+    groups: [{ id: "Aportes", label: "Aportes", nodeIds: ["Transpiración", "Transpiración"] }]
+  }) as { nodes: Array<{ id: string; label: string; pages: unknown; sublabel?: string }>; edges: Array<{ from: string; to: string; label?: string }>; mainPath: string[]; groups: Array<{ id: string; nodeIds: string[] }> };
+  results.push(criterion("normalize-single-page", JSON.stringify(normalized.nodes[0]?.pages) === "[2]" && normalized.nodes[0]?.id === "condensacion" && normalized.nodes[0]?.label === "Condensación", JSON.stringify(normalized.nodes[0]?.pages)));
+  results.push(criterion("normalize-keeps-transition-edges", normalized.edges.some((edge) => edge.from === "evaporacion" && edge.to === "condensacion" && edge.label === "el vapor se enfría"), normalized.edges.map((edge) => `${edge.from}->${edge.to}`).join(" ")));
+  results.push(criterion("normalize-dedupes-exact-edges", normalized.edges.length === 2 && normalized.mainPath[0] === "evaporacion", `edges: ${normalized.edges.length}, mainPath: ${normalized.mainPath.join(",")}`));
+  results.push(criterion("normalize-derives-sublabel", normalized.nodes[0]?.sublabel === "El vapor se enfría en altura." && normalized.nodes[1]?.sublabel === "calienta el agua", `sublabels: ${normalized.nodes.map((node) => node.sublabel).join(" | ")}`));
+  results.push(criterion("normalize-dedupes-group-members", normalized.groups[0]?.id === "aportes" && normalized.groups[0].nodeIds.length === 1, JSON.stringify(normalized.groups[0])));
+
+  const v1Diagram = Schema.decodeUnknownExit(CreateDiagramArtifactInput)(validProcess);
+  results.push(criterion("v1-diagram-still-decodes", v1Diagram._tag === "Success", v1Diagram._tag));
 
   return results;
 });

@@ -86,7 +86,8 @@ export const layoutDiagram = (artifact: DiagramArtifact): DiagramLayout => {
 
 // --- Process: ring ---------------------------------------------------------------
 
-const ring = (artifact: DiagramArtifact, path: readonly string[], edges: DiagramArtifact["edges"]): DiagramLayout => {
+const ring = (artifact: DiagramArtifact, path: readonly string[], allEdges: DiagramArtifact["edges"]): DiagramLayout => {
+  const { transitions, edges } = splitTransitions(path, artifact.cyclic === true, allEdges);
   const count = path.length;
   const radius = Math.max(RING_MIN_RADIUS, (NODE_WIDTH + 40) / (2 * Math.sin(Math.PI / count)));
   const angleOf = (index: number) => -Math.PI / 2 + (index / count) * 2 * Math.PI;
@@ -136,13 +137,16 @@ const ring = (artifact: DiagramArtifact, path: readonly string[], edges: Diagram
     const toAngle = angleOf(index + 1);
     const start = circleExit(center, radius, fromAngle, rects.get(fromId)!, +1);
     const end = circleExit(center, radius, toAngle, rects.get(toId)!, -1);
-    const mid = pointOnCircle(center, radius, (fromAngle + toAngle) / 2);
+    // The label sits just outside the ring, at the middle of the arc.
+    const mid = pointOnCircle(center, radius + 14, (fromAngle + toAngle) / 2);
+    const label = transitions.get(`${fromId}->${toId}`);
     layoutEdges.push({
       id: `main-${index}`,
       from: fromId,
       to: toId,
       kind: "main",
       path: `M ${round(start.x)} ${round(start.y)} A ${round(radius)} ${round(radius)} 0 0 1 ${round(end.x)} ${round(end.y)}`,
+      ...(label === undefined ? {} : { label }),
       labelX: round(mid.x),
       labelY: round(mid.y)
     });
@@ -154,7 +158,8 @@ const ring = (artifact: DiagramArtifact, path: readonly string[], edges: Diagram
 
 // --- Process: column -------------------------------------------------------------
 
-const column = (artifact: DiagramArtifact, path: readonly string[], edges: DiagramArtifact["edges"]): DiagramLayout => {
+const column = (artifact: DiagramArtifact, path: readonly string[], allEdges: DiagramArtifact["edges"]): DiagramLayout => {
+  const { transitions, edges } = splitTransitions(path, false, allEdges);
   const placed: Placed[] = path.map((id, index) => ({
     id,
     cx: 0,
@@ -192,18 +197,48 @@ const column = (artifact: DiagramArtifact, path: readonly string[], edges: Diagr
     const to = rects.get(path[index + 1]!)!;
     const start = { x: from.x + from.width / 2, y: from.y + from.height };
     const end = { x: to.x + to.width / 2, y: to.y };
+    const label = transitions.get(`${from.id}->${to.id}`);
     layoutEdges.push({
       id: `main-${index}`,
       from: from.id,
       to: to.id,
       kind: "main",
       path: line(start, end),
-      labelX: round((start.x + end.x) / 2),
+      ...(label === undefined ? {} : { label }),
+      // Beside the vertical segment, to the left of the column.
+      labelX: round((start.x + end.x) / 2 - 12),
       labelY: round((start.y + end.y) / 2)
     });
   }
   layoutEdges.push(...straightEdges(edges, rects, "side"));
   return { nodes: frame.nodes, edges: layoutEdges, width: frame.width, height: frame.height };
+};
+
+/**
+ * Edges between consecutive steps are the labelled transitions of the main
+ * path: they are drawn on the main edge, not as a second arrow.
+ */
+export const splitTransitions = (
+  path: readonly string[],
+  cyclic: boolean,
+  edges: DiagramArtifact["edges"]
+): { readonly transitions: ReadonlyMap<string, string>; readonly edges: DiagramArtifact["edges"] } => {
+  const stretches = new Set<string>();
+  for (let index = 0; index < path.length; index++) {
+    const next = index < path.length - 1 ? path[index + 1] : cyclic ? path[0] : undefined;
+    if (next !== undefined && next !== path[index]) stretches.add(`${path[index]}->${next}`);
+  }
+  const transitions = new Map<string, string>();
+  const rest: DiagramArtifact["edges"][number][] = [];
+  for (const edge of edges) {
+    const key = `${edge.from}->${edge.to}`;
+    if (stretches.has(key)) {
+      if (edge.label !== undefined && !transitions.has(key)) transitions.set(key, edge.label);
+    } else {
+      rest.push(edge);
+    }
+  }
+  return { transitions, edges: rest };
 };
 
 /** For each side concept, the step it connects to (first edge touching a step wins). */

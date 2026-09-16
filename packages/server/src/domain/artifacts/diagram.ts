@@ -73,15 +73,60 @@ const normalizePages = (pages: unknown): unknown => {
 
 const normalizeId = (id: unknown): unknown => typeof id === "string" ? slugId(id) : id;
 
-const normalizeNode = (node: unknown): unknown => isRecord(node)
+/**
+ * One line for the box when the model sent none: the first sentence of the
+ * description, cut to the limit. Derived, not invented; the skill still asks
+ * for a real sublabel.
+ */
+export const deriveSublabel = (description: string): string => {
+  const first = description.trim().split(/(?<=[.;:!?])\s/)[0] ?? "";
+  const max = diagramLimits.sublabel.max;
+  return first.length <= max ? first : `${first.slice(0, max - 1).trimEnd()}…`;
+};
+
+const normalizeNode = (node: unknown): unknown => {
+  if (!isRecord(node)) return node;
+  const description = typeof node.description === "string" ? node.description.trim() : node.description;
+  const sublabel = typeof node.sublabel === "string" && node.sublabel.trim().length > 0
+    ? node.sublabel.trim()
+    : typeof description === "string" && description.length > 0 ? deriveSublabel(description) : node.sublabel;
+  return {
+    ...node,
+    id: normalizeId(node.id),
+    label: typeof node.label === "string" ? node.label.trim() : node.label,
+    description,
+    pages: normalizePages(node.pages),
+    ...(sublabel === undefined ? {} : { sublabel }),
+    ...(typeof node.kind === "string" ? { kind: node.kind.trim().toLocaleLowerCase() } : {}),
+    ...(typeof node.formula === "string" ? { formula: node.formula.trim() } : {}),
+    ...(typeof node.phase === "string" ? { phase: node.phase.trim() } : {})
+  };
+};
+
+const normalizeGroup = (group: unknown): unknown => isRecord(group)
   ? {
-      ...node,
-      id: normalizeId(node.id),
-      label: typeof node.label === "string" ? node.label.trim() : node.label,
-      description: typeof node.description === "string" ? node.description.trim() : node.description,
-      pages: normalizePages(node.pages)
+      ...group,
+      id: normalizeId(group.id),
+      label: typeof group.label === "string" ? group.label.trim() : group.label,
+      nodeIds: Array.isArray(group.nodeIds) ? [...new Set(group.nodeIds.map(normalizeId))] : group.nodeIds
     }
-  : node;
+  : group;
+
+const normalizeView = (view: unknown): unknown => isRecord(view)
+  ? {
+      ...view,
+      focus: Array.isArray(view.focus) ? [...new Set(view.focus.map(normalizeId))] : view.focus
+    }
+  : view;
+
+const normalizeCard = (card: unknown): unknown => isRecord(card)
+  ? {
+      ...card,
+      title: typeof card.title === "string" ? card.title.trim() : card.title,
+      items: Array.isArray(card.items) ? card.items.map((item) => typeof item === "string" ? item.trim() : item).filter((item) => item !== "") : card.items,
+      pages: normalizePages(card.pages ?? [])
+    }
+  : card;
 
 const normalizeEdge = (edge: unknown): unknown => isRecord(edge)
   ? {
@@ -94,8 +139,10 @@ const normalizeEdge = (edge: unknown): unknown => isRecord(edge)
 
 /**
  * Lossless clean-up of a diagram input before decoding: slug ids everywhere,
- * `pages: 2` as `[2]`, trimmed text, and duplicate edges (or edges that repeat
- * a main-path step) removed. Non-diagram inputs are returned untouched.
+ * `pages: 2` as `[2]`, trimmed text, a sublabel derived from the description
+ * when missing, and exact duplicate edges removed. An edge between two
+ * consecutive steps is kept: it is the labelled transition of that stretch.
+ * Non-diagram inputs are returned untouched.
  */
 export const normalizeDiagramInput = (input: unknown): unknown => {
   if (!isRecord(input) || input.kind !== "diagram") {
@@ -106,21 +153,12 @@ export const normalizeDiagramInput = (input: unknown): unknown => {
   const mainPath = Array.isArray(input.mainPath) ? input.mainPath.map(normalizeId) : input.mainPath;
   const rootId = normalizeId(input.rootId);
 
-  const implicit = new Set<string>();
-  if (Array.isArray(mainPath)) {
-    for (let index = 0; index < mainPath.length; index++) {
-      const from = mainPath[index];
-      const to = index < mainPath.length - 1 ? mainPath[index + 1] : input.cyclic === true ? mainPath[0] : undefined;
-      if (typeof from === "string" && typeof to === "string") implicit.add(`${from}->${to}`);
-    }
-  }
-
   const seen = new Set<string>();
   const edges = Array.isArray(input.edges)
     ? input.edges.map(normalizeEdge).filter((edge) => {
         if (!isRecord(edge) || typeof edge.from !== "string" || typeof edge.to !== "string") return true;
         const key = `${edge.from}->${edge.to}`;
-        if (implicit.has(key) || seen.has(key)) return false;
+        if (seen.has(key)) return false;
         seen.add(key);
         return true;
       })
@@ -132,7 +170,11 @@ export const normalizeDiagramInput = (input: unknown): unknown => {
     nodes,
     edges,
     ...(mainPath === undefined ? {} : { mainPath }),
-    ...(rootId === undefined ? {} : { rootId })
+    ...(rootId === undefined ? {} : { rootId }),
+    ...(Array.isArray(input.phases) ? { phases: input.phases.map((phase) => typeof phase === "string" ? phase.trim() : phase) } : {}),
+    ...(Array.isArray(input.groups) ? { groups: input.groups.map(normalizeGroup) } : {}),
+    ...(Array.isArray(input.cards) ? { cards: input.cards.map(normalizeCard) } : {}),
+    ...(Array.isArray(input.views) ? { views: input.views.map(normalizeView) } : {})
   };
 };
 

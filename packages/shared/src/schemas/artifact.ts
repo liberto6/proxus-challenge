@@ -84,23 +84,81 @@ const artifactBase = {
  * skill quotes them; keeping them here means both read the same numbers.
  */
 export const diagramLimits = {
-  nodes: { min: 3, max: 12 },
-  edges: { max: 20 },
+  nodes: { min: 3, max: 16 },
+  edges: { max: 32 },
   label: { min: 2, max: 40 },
+  sublabel: { min: 8, max: 60 },
   description: { min: 20, max: 240 },
   summary: { min: 20, max: 300 },
   edgeLabel: { min: 2, max: 30 },
-  pagesPerNode: { min: 1, max: 6 }
+  pagesPerNode: { min: 1, max: 6 },
+  groups: { max: 6, members: { min: 2, max: 8 } },
+  cards: { max: 3, title: { max: 40 }, items: { min: 2, max: 5 }, item: { max: 120 } },
+  views: { max: 4, focus: { min: 2, max: 8 } }
 } as const;
 
-/** A concept in the diagram, anchored to the material pages that explain it. */
+/**
+ * What a node is, which decides its shape in the drawing:
+ * `step` (a phase of a process), `concept`, `agent` (who or what acts),
+ * `condition` (what decides a branch), `quantity`, `formula` (carries the
+ * expression), `definition`, `example`.
+ */
+export const DiagramNodeKind = Schema.Union([
+  Schema.Literal("step"),
+  Schema.Literal("concept"),
+  Schema.Literal("agent"),
+  Schema.Literal("condition"),
+  Schema.Literal("quantity"),
+  Schema.Literal("formula"),
+  Schema.Literal("definition"),
+  Schema.Literal("example")
+]);
+export type DiagramNodeKind = typeof DiagramNodeKind.Type;
+
+/**
+ * A concept in the diagram, anchored to the material pages that explain it.
+ * `sublabel`, `kind`, `formula` and `phase` arrived with the second version and
+ * stay optional so earlier diagrams still decode; the validator requires what
+ * each type needs when a new diagram is created.
+ */
 export const DiagramNode = Schema.Struct({
   id: Schema.String,
   label: Schema.String,
   description: Schema.String,
-  pages: Schema.Array(Schema.Number)
+  pages: Schema.Array(Schema.Number),
+  /** One line shown inside the box: what the concept is. */
+  sublabel: Schema.optional(Schema.String),
+  kind: Schema.optional(DiagramNodeKind),
+  /** The expression of a `formula` node, as text. */
+  formula: Schema.optional(Schema.String),
+  /** Timeline: the phase (period, stage) the step belongs to. */
+  phase: Schema.optional(Schema.String)
 });
 export type DiagramNode = typeof DiagramNode.Type;
+
+/** Nodes that belong together; drawn as an outlined box with a title. */
+export const DiagramGroup = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  nodeIds: Schema.Array(Schema.String)
+});
+export type DiagramGroup = typeof DiagramGroup.Type;
+
+/** Text that does not fit in boxes (definitions, dates, key points), shown under the drawing. */
+export const DiagramCard = Schema.Struct({
+  title: Schema.String,
+  items: Schema.Array(Schema.String),
+  pages: Schema.Array(Schema.Number)
+});
+export type DiagramCard = typeof DiagramCard.Type;
+
+/** A guided view: a subset of nodes worth looking at together. */
+export const DiagramView = Schema.Struct({
+  label: Schema.String,
+  focus: Schema.Array(Schema.String),
+  note: Schema.optional(Schema.String)
+});
+export type DiagramView = typeof DiagramView.Type;
 
 /** A relation between two nodes. The label is the proposition ("aporta vapor"). */
 export const DiagramEdge = Schema.Struct({
@@ -111,13 +169,16 @@ export const DiagramEdge = Schema.Struct({
 export type DiagramEdge = typeof DiagramEdge.Type;
 
 /**
- * - `process`: ordered steps (`mainPath`, whose edges are implicit) plus side
- *   relations in `edges`; `cyclic` closes the last step back to the first.
+ * - `process`: ordered steps (`mainPath`) plus side relations in `edges`;
+ *   an edge between two consecutive steps is the labelled transition (its
+ *   cause); `cyclic` closes the last step back to the first.
  * - `concept-map`: a central concept (`rootId`) and labelled relations.
+ * - `timeline`: ordered steps on an axis, each in a phase of `phases`.
  */
 export const DiagramType = Schema.Union([
   Schema.Literal("process"),
-  Schema.Literal("concept-map")
+  Schema.Literal("concept-map"),
+  Schema.Literal("timeline")
 ]);
 export type DiagramType = typeof DiagramType.Type;
 
@@ -130,7 +191,12 @@ const diagramFields = {
   edges: Schema.Array(DiagramEdge),
   mainPath: Schema.optional(Schema.Array(Schema.String)),
   cyclic: Schema.optional(Schema.Boolean),
-  rootId: Schema.optional(Schema.String)
+  rootId: Schema.optional(Schema.String),
+  /** Timeline: phases in order; every step names one of them. */
+  phases: Schema.optional(Schema.Array(Schema.String)),
+  groups: Schema.optional(Schema.Array(DiagramGroup)),
+  cards: Schema.optional(Schema.Array(DiagramCard)),
+  views: Schema.optional(Schema.Array(DiagramView))
 };
 
 // --- Artifacts, by kind (the registry) ------------------------------------------

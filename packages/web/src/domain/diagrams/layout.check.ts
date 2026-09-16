@@ -143,6 +143,22 @@ results.push(
   criterion("map.edge-labels-kept", mapLayout.edges.every((edge) => edge.label !== undefined), `${mapLayout.edges.length} labelled edges`)
 );
 
+const labelledCycle: DiagramArtifact = {
+  ...cycle,
+  id: "labelled",
+  edges: [
+    ...cycle.edges,
+    { from: "evaporacion", to: "condensacion", label: "el vapor se enfría en altura" },
+    { from: "recoleccion", to: "evaporacion", label: "el agua vuelve al mar" }
+  ]
+};
+const labelledLayout = layoutDiagram(labelledCycle);
+results.push(
+  criterion("cycle.transitions-label-the-main-edges", labelledLayout.edges.filter((edge) => edge.kind === "main").length === 4 && labelledLayout.edges.filter((edge) => edge.kind === "side").length === 2 && labelledLayout.edges.some((edge) => edge.kind === "main" && edge.from === "evaporacion" && edge.label === "el vapor se enfría en altura"), `main edges: ${labelledLayout.edges.filter((edge) => edge.kind === "main").map((edge) => edge.label ?? "-").join(" | ")}`),
+  criterion("cycle.transition-labels-outside-ring", labelledLayout.edges.filter((edge) => edge.kind === "main").every((edge) => Math.hypot(edge.labelX - centerX, edge.labelY - centerY) > Math.max(...radii)), "labels sit outside the ring"),
+  criterion("mermaid-does-not-double-transitions", (toMermaid(labelledCycle).match(/-->/g) ?? []).length === 6 && toMermaid(labelledCycle).includes('evaporacion -- "el vapor se enfría en altura" --> condensacion'), `${(toMermaid(labelledCycle).match(/-->/g) ?? []).length} arrows`)
+);
+
 const mermaid = toMermaid(cycle);
 results.push(
   criterion("mermaid-export-counts", mermaid.startsWith("flowchart TD") && (mermaid.match(/-->/g) ?? []).length === 6 && mermaidEdgeCount(cycle) === 6 && mermaid.includes("recoleccion --> evaporacion") && mermaid.includes('-- "aporta vapor" -->'), `${(mermaid.match(/-->/g) ?? []).length} arrows`)
