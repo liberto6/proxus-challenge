@@ -29,6 +29,12 @@ export const TutorHttpHandlers = HttpApiBuilder.group(
       )
       .handle("getSession", ({ params }) =>
         sessions.getSession(params.id).pipe(Effect.orDie)
+      )
+      .handle("removeSession", ({ params }) =>
+        sessions.removeSession(params.id).pipe(
+          Effect.catchTag("SessionNotFound", () => new HttpApiError.NotFound()),
+          Effect.catch((error) => Effect.die(error))
+        )
       );
   })
 );
@@ -129,11 +135,17 @@ export const FoldersHttpHandlers = HttpApiBuilder.group(
     const sessions = yield* SessionRepository;
     const artifacts = yield* ArtifactRepository;
 
+    // An empty conversation is not content: opening a folder creates one.
     const contentsOf = (folderId: string) => Effect.all({
       materials: materials.list().pipe(Effect.map((items) => items.filter((item) => folderOf(item) === folderId).length)),
-      sessions: sessions.listSessions({ folderId }).pipe(Effect.map((items) => items.length)),
+      sessions: sessions.listSessions({ folderId }).pipe(Effect.map((items) => items.filter((item) => item.messageCount > 0).length)),
       artifacts: artifacts.listArtifacts({ folderId }).pipe(Effect.map((items) => items.length))
     }).pipe(Effect.orDie);
+
+    const removeEmptySessions = (folderId: string) => sessions.listSessions({ folderId }).pipe(
+      Effect.flatMap((items) => Effect.forEach(items.filter((item) => item.messageCount === 0), (item) => sessions.removeSession(item.id), { discard: true })),
+      Effect.orDie
+    );
 
     return handlers
       .handle("list", () => folders.list().pipe(
@@ -160,6 +172,7 @@ export const FoldersHttpHandlers = HttpApiBuilder.group(
         if (!isFolderEmpty(contents)) {
           return yield* new FolderNotEmpty(contents);
         }
+        yield* removeEmptySessions(params.id);
         yield* folders.remove(params.id).pipe(
           Effect.catchTag("FolderNotFound", () => new HttpApiError.NotFound()),
           Effect.catchTag("FolderRepositoryError", (error) => Effect.die(error))

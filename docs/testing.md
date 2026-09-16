@@ -31,6 +31,8 @@ pnpm --filter @proxus/server run eval:tutor:sessions
 pnpm --filter @proxus/server run eval:materials
 # diagramas: validación, normalización, bucle de reparación con modelo simulado, skill y contexto
 pnpm --filter @proxus/server run eval:tutor:diagram
+# carpetas: repositorio, pertenencia de PDF/sesiones/artefactos y ámbito del tutor con modelo simulado (necesita Poppler)
+pnpm --filter @proxus/server run eval:folders
 # layout del esquema en la web: nodos sin solapes, anillo para ciclos, causas sobre el camino, grupos, línea de tiempo, determinismo, exportación Mermaid
 pnpm --filter @proxus/web run check:layout
 ```
@@ -61,7 +63,8 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 
 Con un PDF de prueba (`packages/server/fixtures/materials/ciclo-del-agua.pdf`). Cada turno con lectura de páginas consume 3 o 4 peticiones al modelo.
 
-1. `pnpm run dev` y abre `http://localhost:5173`. Debe cargar una sesión (o crearla) y mostrarla en la cabecera.
+1. `pnpm run dev` y abre `http://localhost:5173`. Debe cargar la carpeta recordada (General la primera vez) con su conversación, y mostrar «Guardada» en la cabecera.
+1b. Carpetas: crea «Biología» desde el selector (+): la barra queda vacía («Sube un PDF a esta carpeta») con una conversación nueva; sube el PDF: aparece solo aquí, y al volver a General no está. En Biología, «Explícame las fases…» → el tutor lista solo ese PDF. Pregunta por un PDF de General → responde que está en otra carpeta sin inventar. «Nueva» crea otra conversación en la carpeta; la anterior sigue en la lista y se reabre con sus mensajes; el icono de papelera la borra. Eliminar una carpeta con contenido muestra el motivo («Vacía la carpeta antes de eliminarla: contiene 1 PDF…»); una vacía desaparece y vuelves a General. Recargar mantiene carpeta y conversación.
 2. Materiales: sube el PDF desde la barra lateral (aparece con título y páginas); sube un `.txt` renombrado a `.pdf` (error legible, lista sin cambios); borra el subido (confirmación en segundo paso).
 3. Lectura anclada: «Explícame las fases del ciclo del agua usando mi material, páginas 1-2, y cita las páginas». Mientras trabaja se ve «Leyendo páginas 1-2 de …»; la respuesta cita solo páginas leídas y no inventa título ni términos.
 4. Quiz: «Crea un quiz de 3 preguntas sobre las páginas 1-2». El chat responde con un resumen breve y un botón para abrirlo; no repite las preguntas. El panel muestra «Basado en …, páginas 1-2».

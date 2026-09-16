@@ -32,7 +32,7 @@ const describeStatus = (status: number): string => {
  * because `fetch` does not report upload progress. Same endpoint and payload
  * as before. Throws with a message meant for the user.
  */
-export const uploadMaterial = (file: File, options: UploadOptions = {}, title?: string): Promise<PdfMaterial> => {
+export const uploadMaterial = (file: File, options: UploadOptions = {}, title?: string, folderId?: string): Promise<PdfMaterial> => {
   if (!file.name.toLowerCase().endsWith(".pdf")) {
     return Promise.reject(new Error("Solo se admiten ficheros PDF."));
   }
@@ -44,6 +44,9 @@ export const uploadMaterial = (file: File, options: UploadOptions = {}, title?: 
   form.append("file", file, file.name);
   if (title !== undefined && title.trim().length > 0) {
     form.append("title", title.trim());
+  }
+  if (folderId !== undefined) {
+    form.append("folderId", folderId);
   }
 
   return new Promise<PdfMaterial>((resolve, reject) => {

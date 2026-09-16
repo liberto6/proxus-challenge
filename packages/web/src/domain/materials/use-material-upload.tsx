@@ -25,9 +25,9 @@ export interface MaterialUploader {
 
 /**
  * One upload at a time, shared by the sidebar and the empty state so both can
- * trigger it and show its progress.
+ * trigger it and show its progress. Files go to the open folder.
  */
-export const useMaterialUpload = (): MaterialUploader => {
+export const useMaterialUpload = (folderId: string): MaterialUploader => {
   const refreshMaterials = useAtomRefresh(materialsQuery);
   const inputRef = useRef<HTMLInputElement>(null);
   const controller = useRef<AbortController | undefined>(undefined);
@@ -44,7 +44,7 @@ export const useMaterialUpload = (): MaterialUploader => {
       await uploadMaterial(file, {
         signal: abort.signal,
         onProgress: (progress) => setUpload((current) => current === undefined ? current : { ...current, progress })
-      });
+      }, undefined, folderId);
       refreshMaterials();
     } catch (cause) {
       if (!(cause instanceof UploadCancelled)) {

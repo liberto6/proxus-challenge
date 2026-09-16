@@ -90,6 +90,10 @@ Todo diagrama pasa por `validateDiagram` antes de persistirse: ids únicos, lím
 
 Límite conocido: la validación comprueba estructura y anclaje, no que la descripción de cada nodo sea fiel al PDF; eso se mide en el eval en vivo por cobertura de conceptos del fixture.
 
+## Carpetas: el ámbito del tutor
+
+Cada conversación pertenece a una carpeta (General si no se indica). El servicio de chat provee `FolderScope` al turno (`domain/folders/folder.ts`), y los comandos lo aplican en código: `materials list` y `artifacts list` filtran, `materials view` y `artifacts show` rechazan lo que está en otra carpeta sin renderizar nada, `artifacts create` estampa la carpeta. La nota de sistema del turno empieza por `FOLDER: … "Biología" (n material(s))` para que el tutor pueda decir "en esta carpeta" en vez de "no tienes materiales". Sin `FolderScope` (CLI, evals sin carpeta) no se filtra nada. Eval: `eval:folders`.
+
 ## Contexto de la interfaz
 
 La web envía en cada turno qué artefacto tiene abierto el alumno (`context.openArtifactId`, y opcionalmente `openQuestionId` o, en un diagrama, `openNodeId`). El servicio carga el artefacto y añade una nota de sistema solo para ese turno (`academic-tutor/ui-context.ts`), así "explícame la pregunta 2" se entiende sin nombrar el quiz. Al crear un artefacto, el comando devuelve solo una confirmación compacta (id, tipo, título, número de preguntas) y la skill indica responder con un resumen breve sin repetir el contenido: el alumno lo abre desde el panel, donde el chat ofrece un botón "Abrir".

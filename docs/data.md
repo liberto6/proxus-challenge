@@ -6,8 +6,10 @@ El server usa storage local bajo `packages/server/.data`. Esa carpeta está igno
 
 ```txt
 packages/server/.data/
+  folders/
+    <folderId>.json     # carpetas creadas (General es virtual hasta que se renombra)
   agent-sessions/
-    <sessionId>.json
+    <sessionId>.json    # con folderId opcional
   artifacts/
     artifacts/
       <artifactId>.json
@@ -16,7 +18,7 @@ packages/server/.data/
   materials/
     pdfs/
       <id>.pdf
-      <id>.meta.json      # título y fecha de subida (solo para PDFs subidos desde la UI)
+      <id>.meta.json      # título, fecha de subida y carpeta (solo para PDFs subidos desde la UI)
 ```
 
 ## Materials

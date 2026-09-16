@@ -93,6 +93,7 @@ pnpm --filter @proxus/server run eval:tutor:grounding
 pnpm --filter @proxus/server run eval:tutor:sessions
 pnpm --filter @proxus/server run eval:materials
 pnpm --filter @proxus/server run eval:tutor:diagram
+pnpm --filter @proxus/server run eval:folders
 pnpm --filter @proxus/web run check:layout
 
 # CLI del tutor (consume API)
@@ -107,12 +108,12 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 3. Lee [`docs/architecture.md`](./docs/architecture.md) para ubicarte en paquetes y capas.
 4. Si Effect no te resulta familiar, lee [`docs/effect-primer.md`](./docs/effect-primer.md) y [`docs/resources.md`](./docs/resources.md).
 5. Ejecuta `pnpm run dev` y prueba el flujo:
-   - sube un PDF desde la barra lateral (por ejemplo `packages/server/fixtures/materials/ciclo-del-agua.pdf`),
+   - crea una carpeta para el tema (o usa General) y sube un PDF desde la barra lateral (por ejemplo `packages/server/fixtures/materials/ciclo-del-agua.pdf`); el tutor solo verá los PDF de la carpeta abierta,
    - pide al tutor que te explique unas páginas citándolas: verás qué páginas lee mientras trabaja,
    - pide un quiz sobre esas páginas y ábrelo desde el botón que aparece en el chat,
    - resuélvelo, revisa las correcciones y pregúntale al tutor por una pregunta con el quiz abierto,
    - pide que te explique las fases del ciclo: el tutor decide dibujar un esquema; ábrelo, toca un concepto, salta a la página que lo explica y pregúntale por él,
-   - recarga la página: la conversación se conserva.
+   - recarga la página: la carpeta y la conversación se conservan; las conversaciones de la carpeta se listan y se reabren desde la barra.
 6. Si necesitas más detalle sobre storage local, sigue [`docs/data.md`](./docs/data.md); no subas `.data`.
 7. Las decisiones que explican el diseño actual están en [`docs/decisions.md`](./docs/decisions.md).
 8. Antes de entregar cambios, ejecuta [`docs/testing.md`](./docs/testing.md).
@@ -124,7 +125,8 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 - La corrección de respuesta corta compara texto normalizado, no significado.
 - La ruta de streaming del chat es manual (fuera de Effect HTTP API), como en la base original.
 - Con la cuota gratuita de Gemini, un turno con lectura de páginas consume 3 o 4 peticiones; ante cuota diaria agotada el tutor lo dice y no reintenta.
-- Sin multiusuario: sesiones, materiales y artefactos son ficheros locales sin propietario.
+- Sin multiusuario: carpetas, sesiones, materiales y artefactos son ficheros locales sin propietario.
+- Un PDF pertenece a una sola carpeta y no se mueve ni se copia desde la interfaz; para usarlo en otra carpeta se sube de nuevo.
 
 ## Nota sobre runtime y package manager
 

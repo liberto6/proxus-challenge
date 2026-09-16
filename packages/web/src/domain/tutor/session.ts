@@ -1,55 +1,54 @@
 import { Schema } from "effect";
-import { AgentSession } from "@proxus/shared";
+import { AgentSession, folderOf } from "@proxus/shared";
 import { apiClientConfig } from "../../api-client/config.ts";
 
 /**
- * The current tutor session. The conversation is stored on the server; the
- * browser only remembers which session it was looking at.
+ * Conversations live on the server inside a folder. The browser remembers
+ * which one it was looking at (see `domain/folders/current.ts`).
  */
-const storageKey = "proxus.tutor.sessionId";
-
 const decodeSession = Schema.decodeUnknownSync(AgentSession);
 
-const rememberedSessionId = (): string | undefined => {
-  try {
-    return window.localStorage.getItem(storageKey) ?? undefined;
-  } catch {
-    return undefined;
-  }
-};
-
-const rememberSessionId = (id: string) => {
-  try {
-    window.localStorage.setItem(storageKey, id);
-  } catch {
-    // Private mode or blocked storage: the session still works for this page load.
-  }
-};
-
-export const createSession = async (): Promise<AgentSession> => {
+export const createSession = async (folderId: string): Promise<AgentSession> => {
   const response = await fetch(`${apiClientConfig.apiUrl}/api/tutor/sessions`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({})
+    body: JSON.stringify({ folderId })
   });
   if (!response.ok) {
-    throw new Error(`No se pudo crear la sesión (${response.status})`);
-  }
-  const session = decodeSession(await response.json());
-  rememberSessionId(session.id);
-  return session;
-};
-
-/** Loads the remembered session, or creates a new one when there is none or it no longer exists. */
-export const loadOrCreateSession = async (): Promise<AgentSession> => {
-  const id = rememberedSessionId();
-  if (id === undefined) {
-    return createSession();
-  }
-
-  const response = await fetch(`${apiClientConfig.apiUrl}/api/tutor/sessions/${encodeURIComponent(id)}`);
-  if (!response.ok) {
-    return createSession();
+    throw new Error(`No se pudo crear la conversación (${response.status})`);
   }
   return decodeSession(await response.json());
+};
+
+export const deleteSession = async (id: string): Promise<void> => {
+  const response = await fetch(`${apiClientConfig.apiUrl}/api/tutor/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok && response.status !== 404) {
+    throw new Error(`No se pudo borrar la conversación (${response.status})`);
+  }
+};
+
+/** The stored session, or `undefined` when it no longer exists. */
+export const loadSession = async (id: string): Promise<AgentSession | undefined> => {
+  const response = await fetch(`${apiClientConfig.apiUrl}/api/tutor/sessions/${encodeURIComponent(id)}`);
+  if (response.status === 404) {
+    return undefined;
+  }
+  if (!response.ok) {
+    throw new Error(`No se pudo cargar la conversación (${response.status})`);
+  }
+  return decodeSession(await response.json());
+};
+
+/**
+ * The remembered conversation of a folder, or a new one when there is none,
+ * it no longer exists, or it belongs to another folder.
+ */
+export const resumeOrCreateSession = async (folderId: string, rememberedId: string | undefined): Promise<AgentSession> => {
+  if (rememberedId !== undefined) {
+    const session = await loadSession(rememberedId);
+    if (session !== undefined && folderOf(session) === folderId) {
+      return session;
+    }
+  }
+  return createSession(folderId);
 };

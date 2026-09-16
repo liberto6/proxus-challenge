@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { HttpApiEndpoint, HttpApiGroup } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiError, HttpApiGroup } from "effect/unstable/httpapi";
 import { AgentMessage } from "../schemas/agent-message.ts";
 import { AgentSession, AgentSessionListResponse } from "../schemas/agent-session.ts";
 import { FolderQuery } from "../schemas/folder.ts";
@@ -61,6 +61,12 @@ export class TutorApi extends HttpApiGroup.make("tutor")
         id: Schema.String
       },
       success: AgentSession
+    }),
+    HttpApiEndpoint.delete("removeSession", "/sessions/:id", {
+      params: {
+        id: Schema.String
+      },
+      error: HttpApiError.NotFound
     })
   )
   .prefix("/tutor")

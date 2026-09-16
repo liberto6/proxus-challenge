@@ -93,7 +93,13 @@ const InMemorySessionRepository = Layer.effect(
       Effect.map((sessions) => [...sessions.values()].map(summarizeSession))
     );
 
-    return { getSession, makeSession, appendMessages, listSessions };
+    const removeSession = (id: string) => Ref.update(store, (all) => {
+      const next = new Map(all);
+      next.delete(id);
+      return next;
+    });
+
+    return { getSession, makeSession, appendMessages, listSessions, removeSession };
   })
 );
 

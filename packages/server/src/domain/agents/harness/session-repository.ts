@@ -68,6 +68,7 @@ export interface SessionRepository {
   ) => Effect.Effect<void, SessionRepositoryError>;
   /** Sessions ordered by last update, newest first. */
   readonly listSessions: (input?: ListSessionsInput) => Effect.Effect<readonly StoredAgentSessionSummary[], SessionRepositoryError>;
+  readonly removeSession: (id: string) => Effect.Effect<void, SessionRepositoryError | SessionNotFound>;
 }
 
 export const summarizeSession = (session: StoredAgentSession): StoredAgentSessionSummary => {

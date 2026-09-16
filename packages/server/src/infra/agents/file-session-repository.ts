@@ -165,11 +165,17 @@ export const FileSessionRepository = {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     });
 
+    const removeSession = (id: string) => Effect.gen(function* () {
+      yield* readSessionFile(id);
+      yield* fs.remove(pathForSession(id)).pipe(Effect.mapError(mapStorageError));
+    });
+
     return {
       getSession,
       makeSession,
       appendMessages,
-      listSessions
+      listSessions,
+      removeSession
     };
   }),
   layer: (directory: string) => Layer.effect(SessionRepository)(FileSessionRepository.make(directory))

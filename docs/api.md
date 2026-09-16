@@ -9,15 +9,29 @@ En local:
 
 ## Endpoints
 
+### Carpetas
+
+```http
+GET    /api/folders/              # todas, General primera
+POST   /api/folders/              # { title } -> Folder; 400 título vacío, 409 FolderTitleTaken
+PATCH  /api/folders/:id           # { title }; 404, 409
+DELETE /api/folders/:id           # 204; 404; 409 FolderNotEmpty { materials, sessions, artifacts }
+```
+
+Una carpeta agrupa materiales, conversaciones y práctica. La pertenencia va en cada elemento (`folderId` opcional en `PdfMaterial`, `AgentSession`, `Artifact` y sus resúmenes); sin `folderId` el elemento está en **General** (`general`), que existe siempre, se puede renombrar y no se borra. Los listados aceptan `?folderId=`. Borrar una carpeta se rechaza mientras tenga PDF, conversaciones con mensajes o artefactos (las conversaciones vacías se eliminan con ella). No hay mover ni copiar entre carpetas: un PDF pertenece a una carpeta.
+
 ### Tutor
 
 ```http
-POST /api/tutor/sessions          # crea una sesión vacía
-GET  /api/tutor/sessions          # lista resúmenes (id, fechas, nº mensajes, primer mensaje)
-GET  /api/tutor/sessions/:id      # sesión con todos sus mensajes
-POST /api/tutor/chat              # un turno, respuesta completa
-POST /api/tutor/chat/stream       # un turno, eventos NDJSON
+POST   /api/tutor/sessions        # { folderId? } crea una sesión vacía en esa carpeta (General si falta)
+GET    /api/tutor/sessions        # lista resúmenes (id, fechas, nº mensajes, primer mensaje, carpeta); ?folderId=
+GET    /api/tutor/sessions/:id    # sesión con todos sus mensajes
+DELETE /api/tutor/sessions/:id    # borra la conversación
+POST   /api/tutor/chat            # un turno, respuesta completa
+POST   /api/tutor/chat/stream     # un turno, eventos NDJSON
 ```
+
+El tutor trabaja dentro de la carpeta de la sesión: `materials list` y `artifacts list` solo devuelven lo de esa carpeta, y `materials view` de un PDF de otra carpeta se rechaza. El cliente no envía la carpeta en cada turno; el servidor la toma de la sesión.
 
 La conversación se guarda en el servidor (`.data/agent-sessions/<id>.json`). Cada turno envía `{ sessionId, input, maxSteps?, context? }`, donde `context` indica qué artefacto (y pregunta o nodo de un diagrama) tiene abierto el alumno para que el tutor pueda referirse a ello sin preguntar; se inyecta como nota de sistema de ese turno y no se persiste. Cada turno: el servidor carga el historial, ejecuta el turno y persiste sus mensajes al terminar. Un turno que acaba en `error` no persiste nada, así que reintentar no duplica el mensaje del alumno. La web solo recuerda el `sessionId` en `localStorage`.
 
@@ -37,21 +51,21 @@ La ruta streaming está implementada manualmente para soportar eventos increment
 ### Materials
 
 ```http
-GET    /api/materials/          # lista
+GET    /api/materials/          # lista; ?folderId= filtra
 GET    /api/materials/:id
 GET    /api/materials/:id/pages/:page   # una página renderizada (PNG como data URI); 404 sin material, 400 fuera de rango
-POST   /api/materials/          # multipart: file (PDF, máx. 20 MB) y title opcional -> PdfMaterial
+POST   /api/materials/          # multipart: file (PDF, máx. 20 MB), title y folderId opcionales -> PdfMaterial
 DELETE /api/materials/:id       # 404 si no existe
 ```
 
 Los materiales representan PDFs disponibles para el tutor. El server puede renderizar páginas vía Poppler para que Gemini las procese como imágenes.
 
-La subida valida cabecera PDF y que Poppler pueda leerlo (400 si no). El id se deriva del título (slug más sufijo corto), por ejemplo `ciclo-del-agua-a1b2c3`; el título se guarda en `<id>.meta.json` junto al PDF. Los PDFs copiados a mano sin sidecar siguen funcionando con su nombre de fichero como id y título.
+La subida valida cabecera PDF y que Poppler pueda leerlo (400 si no). El id se deriva del título (slug más sufijo corto), por ejemplo `ciclo-del-agua-a1b2c3`; el título se guarda en `<id>.meta.json` junto al PDF. Los PDFs copiados a mano sin sidecar siguen funcionando con su nombre de fichero como id y título, y aparecen en la carpeta General.
 
 ### Artifacts
 
 ```http
-GET /api/artifacts/
+GET /api/artifacts/             # ?kind= y ?folderId= filtran
 GET /api/artifacts/:id
 POST /api/artifacts/:id/submit
 ```

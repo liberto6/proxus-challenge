@@ -1,29 +1,135 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import type { ArtifactSummary, PdfMaterial } from "@proxus/shared";
+import { folderOf, type AgentSessionSummary, type ArtifactSummary, type PdfMaterial } from "@proxus/shared";
 import { useState, type DragEvent } from "react";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactsQuery } from "../domain/artifacts/atoms.ts";
+import { sessionsQuery } from "../domain/folders/atoms.ts";
 import { materialsQuery } from "../domain/materials/atoms.ts";
+import { FolderSwitcher } from "./FolderSwitcher.tsx";
 import { deleteMaterial } from "../domain/materials/upload.ts";
 import type { MaterialUploader } from "../domain/materials/use-material-upload.tsx";
 import { formatBytes, formatPages, pluralize, relativeDay } from "../lib/format.ts";
 import { Icon, KindIcon, kindLabel, Mascot } from "./icons.tsx";
 
+/** The folder open in the app and the conversation inside it, owned by `App`. */
+export interface FolderContext {
+  readonly folderId: string;
+  readonly sessionId: string | undefined;
+  readonly onSelectFolder: (folderId: string) => void;
+  readonly onFolderDeleted: (folderId: string) => void;
+  readonly onSelectSession: (sessionId: string) => void;
+  readonly onNewSession: () => void;
+  readonly onRemoveSession: (sessionId: string) => void;
+  readonly sessionBusy: boolean;
+}
+
 interface SidebarProps {
+  readonly folder: FolderContext;
   readonly uploader: MaterialUploader;
   readonly selectedArtifactId: string | null;
   readonly onSelectArtifact: (artifactId: string) => void;
 }
 
-export function Sidebar({ uploader, selectedArtifactId, onSelectArtifact }: SidebarProps) {
+export function Sidebar({ folder, uploader, selectedArtifactId, onSelectArtifact }: SidebarProps) {
   return (
     <aside className="flex h-full min-h-0 flex-col border-ink border-r-2 bg-paper">
       <Brand />
       <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 pt-3 pb-4">
-        <MaterialsSection uploader={uploader} />
-        <PracticeList selectedArtifactId={selectedArtifactId} onSelectArtifact={onSelectArtifact} />
+        <FolderSwitcher folderId={folder.folderId} onSelect={folder.onSelectFolder} onDeleted={folder.onFolderDeleted} />
+        <MaterialsSection folderId={folder.folderId} uploader={uploader} />
+        <SessionsSection folder={folder} />
+        <PracticeList folderId={folder.folderId} selectedArtifactId={selectedArtifactId} onSelectArtifact={onSelectArtifact} />
       </div>
     </aside>
+  );
+}
+
+// --- Conversaciones --------------------------------------------------------------
+
+/** The folder's conversations, newest first; the open one is marked and a new one starts empty. */
+export function SessionsSection({ folder }: { readonly folder: FolderContext }) {
+  const sessions = useAtomValue(sessionsQuery);
+  const refreshSessions = useAtomRefresh(sessionsQuery);
+  const [confirmRemove, setConfirmRemove] = useState<string | undefined>();
+  return (
+    <section>
+      <div className="mb-2.5 flex items-center justify-between gap-3">
+        <SectionTitle color="bg-mint">Conversaciones</SectionTitle>
+        <button className="btn btn-secondary btn-sm" type="button" onClick={folder.onNewSession} disabled={folder.sessionBusy}>
+          <Icon name="chat" size={15} strokeWidth={2.2} /> Nueva
+        </button>
+      </div>
+      <div className="flex flex-col gap-2.5">
+        {AsyncResult.matchWithError(sessions, {
+          onInitial: () => <Skeleton rows={1} />,
+          onError: (cause) => <LoadError message={String(cause)} onRetry={refreshSessions} />,
+          onDefect: (cause) => <LoadError message={String(cause)} onRetry={refreshSessions} />,
+          onSuccess: ({ value }) => {
+            const own = value.sessions.filter((session) => folderOf(session) === folder.folderId && (session.messageCount > 0 || session.id === folder.sessionId));
+            return own.length === 0
+              ? (
+                  <p className="rounded-md border-2 border-line border-dashed p-3.5 text-center font-semibold text-ink-subtle text-sm">
+                    Las conversaciones de esta carpeta aparecerán aquí.
+                  </p>
+                )
+              : own.map((session) => (
+                  <SessionRow
+                    key={session.id}
+                    session={session}
+                    active={session.id === folder.sessionId}
+                    confirming={confirmRemove === session.id}
+                    onSelect={() => folder.onSelectSession(session.id)}
+                    onAskRemove={() => setConfirmRemove(session.id)}
+                    onCancelRemove={() => setConfirmRemove(undefined)}
+                    onConfirmRemove={() => { setConfirmRemove(undefined); folder.onRemoveSession(session.id); }}
+                  />
+                ));
+          }
+        })}
+      </div>
+    </section>
+  );
+}
+
+function SessionRow({ session, active, confirming, onSelect, onAskRemove, onCancelRemove, onConfirmRemove }: {
+  readonly session: AgentSessionSummary;
+  readonly active: boolean;
+  readonly confirming: boolean;
+  readonly onSelect: () => void;
+  readonly onAskRemove: () => void;
+  readonly onCancelRemove: () => void;
+  readonly onConfirmRemove: () => void;
+}) {
+  const when = relativeDay(session.updatedAt);
+  const title = session.preview.length > 0 ? session.preview : "Conversación nueva";
+  return (
+    <div className={`flex items-center gap-2.5 p-3 transition ${confirming ? "card-flat border-rosa bg-rosa-soft" : active ? "card bg-sun-soft" : "card-flat hover:border-ink"}`}>
+      <button className="flex min-w-0 flex-1 items-center gap-2.5 text-left" type="button" onClick={onSelect} aria-current={active ? "true" : undefined}>
+        <span className={`kind-icon ${active ? "bg-sun-soft text-sun-ink" : "bg-mint-soft text-mint-ink"}`} style={{ width: 34, height: 34 }}>
+          <Icon name="chat" size={18} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="line-clamp-2 block font-extrabold text-sm leading-tight">{title}</span>
+          <span className="mt-0.5 block font-semibold text-ink-muted text-sm">
+            {pluralize(session.messageCount, "mensaje", "mensajes")}{when !== undefined ? ` · ${when}` : ""}
+          </span>
+        </span>
+      </button>
+      {confirming
+        ? (
+            <div className="flex shrink-0 gap-1.5">
+              <button className="btn btn-danger btn-sm" type="button" onClick={onConfirmRemove}>Borrar</button>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={onCancelRemove}>No</button>
+            </div>
+          )
+        : session.messageCount > 0
+          ? (
+              <button className="icon-btn shrink-0" type="button" onClick={onAskRemove} aria-label={`Borrar la conversación «${title}»`} title="Borrar conversación">
+                <Icon name="trash" size={16} />
+              </button>
+            )
+          : <Icon name="chevron" size={16} className="shrink-0 text-ink" />}
+    </div>
   );
 }
 
@@ -50,8 +156,10 @@ function SectionTitle({ children, color }: { readonly children: string; readonly
 
 // --- Materiales --------------------------------------------------------------------
 
-export function MaterialsSection({ uploader, hideTitle = false }: { readonly uploader: MaterialUploader; readonly hideTitle?: boolean }) {
-  const materials = useAtomValue(materialsQuery);
+export function MaterialsSection({ folderId, uploader, hideTitle = false }: { readonly folderId: string; readonly uploader: MaterialUploader; readonly hideTitle?: boolean }) {
+  const allMaterials = useAtomValue(materialsQuery);
+  // Only the open folder's PDFs; hand-copied files without a folder show in General.
+  const materials = AsyncResult.map(allMaterials, (value) => ({ materials: value.materials.filter((material) => folderOf(material) === folderId) }));
   const refreshMaterials = useAtomRefresh(materialsQuery);
   const [confirmDelete, setConfirmDelete] = useState<string | undefined>();
   const [deleteError, setDeleteError] = useState<string | undefined>();
@@ -137,8 +245,8 @@ export function MaterialsSection({ uploader, hideTitle = false }: { readonly upl
                 {value.materials.length === 0
                   ? (
                       <>
-                        <strong className="font-extrabold text-ink text-sm">Arrastra un PDF aquí</strong>
-                        <span>o pulsa «Subir PDF». Apuntes, temas, diapositivas.</span>
+                        <strong className="font-extrabold text-ink text-sm">Sube un PDF a esta carpeta</strong>
+                        <span>Arrástralo aquí o pulsa «Subir PDF». Apuntes, temas, diapositivas.</span>
                       </>
                     )
                   : <span>Arrastra otro PDF aquí</span>}
@@ -205,11 +313,13 @@ function UploadCard({ upload, onCancel }: { readonly upload: { fileName: string;
 
 // --- Práctica ----------------------------------------------------------------------
 
-export function PracticeList({ selectedArtifactId, onSelectArtifact }: {
+export function PracticeList({ folderId, selectedArtifactId, onSelectArtifact }: {
+  readonly folderId: string;
   readonly selectedArtifactId: string | null;
   readonly onSelectArtifact: (artifactId: string) => void;
 }) {
-  const artifacts = useAtomValue(artifactsQuery);
+  const allArtifacts = useAtomValue(artifactsQuery);
+  const artifacts = AsyncResult.map(allArtifacts, (value) => ({ artifacts: value.artifacts.filter((artifact) => folderOf(artifact) === folderId) }));
   const refreshArtifacts = useAtomRefresh(artifactsQuery);
   const materials = useAtomValue(materialsQuery);
   const materialTitles = AsyncResult.isSuccess(materials)
@@ -229,7 +339,7 @@ export function PracticeList({ selectedArtifactId, onSelectArtifact }: {
           onSuccess: ({ value }) => value.artifacts.length === 0
             ? (
                 <p className="rounded-md border-2 border-line border-dashed p-3.5 text-center font-semibold text-ink-subtle text-sm">
-                  Los esquemas, notas, quizzes y tests que cree el tutor aparecerán aquí.
+                  Los esquemas, notas, quizzes y tests que el tutor cree en esta carpeta aparecerán aquí.
                 </p>
               )
             : value.artifacts.map((artifact) => (

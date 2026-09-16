@@ -1,5 +1,5 @@
 import { useAtomRefresh } from "@effect/atom-react";
-import { isArtifactKind, type AgentMessage, type ArtifactKind } from "@proxus/shared";
+import { isArtifactKind, type AgentMessage, type AgentSession, type ArtifactKind } from "@proxus/shared";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Streamdown } from "streamdown";
 import "streamdown/styles.css";
@@ -7,7 +7,7 @@ import { artifactsQuery } from "../domain/artifacts/atoms.ts";
 import { materialsQuery } from "../domain/materials/atoms.ts";
 import { describeCompletedStep, describeToolMessage } from "../domain/tutor/activity.ts";
 import { applyInvalidations, invalidationsForToolCall } from "../domain/tutor/invalidation.ts";
-import { createSession, loadOrCreateSession } from "../domain/tutor/session.ts";
+import { sessionsQuery } from "../domain/folders/atoms.ts";
 import { streamTutorMessage } from "../domain/tutor/stream.ts";
 import { pluralize } from "../lib/format.ts";
 import { Icon, KindIcon, kindLabel, Mascot } from "./icons.tsx";
@@ -32,7 +32,17 @@ export interface ChatPrefill {
   readonly nodeId?: string;
 }
 
+/** The conversation the chat shows; the app owns it (folder, creation, switching). */
+export interface ChatSession {
+  readonly state: "loading" | "ready" | "failed";
+  readonly session: AgentSession | undefined;
+  readonly error: string | undefined;
+  /** Loads the folder's conversation again after a failure. */
+  readonly retry: () => void;
+}
+
 interface ChatProps {
+  readonly chatSession: ChatSession;
   /** Artifact open in the workspace, sent to the tutor as context. */
   readonly selectedArtifactId: string | null;
   readonly onSelectArtifact: (artifactId: string) => void;
@@ -45,18 +55,18 @@ interface ChatProps {
   readonly headerExtra?: ReactNode;
 }
 
-export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onRequestUpload, prefill, mobile = false, headerExtra }: ChatProps) {
-  const [sessionId, setSessionId] = useState<string | undefined>();
-  const [sessionState, setSessionState] = useState<"loading" | "ready" | "failed">("loading");
+export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMaterials, onRequestUpload, prefill, mobile = false, headerExtra }: ChatProps) {
+  const sessionId = chatSession.session?.id;
+  const sessionState = chatSession.state;
   const [messages, setMessages] = useState<readonly AgentMessage[]>([]);
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [progress, setProgress] = useState<readonly string[]>([]);
   const [error, setError] = useState<TurnError | undefined>();
-  const [confirmNew, setConfirmNew] = useState(false);
   const [focusedNodeId, setFocusedNodeId] = useState<string | undefined>();
   const refreshArtifacts = useAtomRefresh(artifactsQuery);
   const refreshMaterials = useAtomRefresh(materialsQuery);
+  const refreshSessions = useAtomRefresh(sessionsQuery);
   const pendingInvalidations = useRef<Array<ReturnType<typeof invalidationsForToolCall>>>([]);
   const abortController = useRef<AbortController | undefined>(undefined);
   const textarea = useRef<HTMLTextAreaElement>(null);
@@ -64,28 +74,17 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
   const thread = useRef<HTMLDivElement>(null);
   /** False once the student scrolls up to read; new content then stops pulling the view down. */
   const stickToBottom = useRef(true);
-  const [sessionAttempt, setSessionAttempt] = useState(0);
   const ready = sessionState === "ready";
   const showEmptyState = messages.length === 0 && !isSending && sessionState !== "failed";
 
+  // A different conversation (new one, another folder, reopened from the list) replaces the thread.
   useEffect(() => {
-    let cancelled = false;
-    setSessionState("loading");
-    loadOrCreateSession()
-      .then((session) => {
-        if (cancelled) return;
-        setSessionId(session.id);
-        setMessages(session.messages);
-        setSessionState("ready");
-        setError(undefined);
-      })
-      .catch((cause) => {
-        if (cancelled) return;
-        setSessionState("failed");
-        setError({ message: `No se pudo cargar la conversación: ${cause instanceof Error ? cause.message : String(cause)}`, input: undefined });
-      });
-    return () => { cancelled = true; };
-  }, [sessionAttempt]);
+    abortController.current?.abort();
+    setMessages(chatSession.session?.messages ?? []);
+    setError(chatSession.error === undefined ? undefined : { message: chatSession.error, input: undefined });
+    setInput("");
+    setProgress([]);
+  }, [chatSession.session?.id, chatSession.error]);
 
   // Keep the latest message and the live progress in view while the student is
   // at the bottom. Content grows after render (markdown, fonts), so follow the
@@ -129,22 +128,6 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
   useEffect(() => {
     autoGrow(textarea.current);
   }, [input]);
-
-  const startNewSession = async () => {
-    if (isSending) return;
-    setConfirmNew(false);
-    setSessionState("loading");
-    setError(undefined);
-    try {
-      const session = await createSession();
-      setSessionId(session.id);
-      setMessages([]);
-      setSessionState("ready");
-    } catch (cause) {
-      setSessionState("failed");
-      setError({ message: `No se pudo crear la conversación: ${cause instanceof Error ? cause.message : String(cause)}`, input: undefined });
-    }
-  };
 
   const submit = async (nextInput: string, history: readonly AgentMessage[] = messages) => {
     const trimmed = nextInput.trim();
@@ -202,6 +185,8 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
       if (turnFailed === undefined) {
         setInput("");
         setFocusedNodeId(undefined);
+        // The conversation list shows the first message and the last activity.
+        refreshSessions();
       } else {
         // Drop the failed turn so a retry does not duplicate the user message.
         setMessages(historyBefore);
@@ -240,25 +225,6 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
           : <h1 className="font-display font-semibold text-lg">Conversación</h1>}
         <div className="flex items-center gap-2">
           <SessionStatus state={sessionState} compact={mobile} />
-          {confirmNew
-            ? (
-                <span className="flex items-center gap-1.5 font-bold text-sm">
-                  {!mobile && <span className="text-ink-muted">¿Empezar de cero?</span>}
-                  <button className="btn btn-secondary btn-sm" type="button" onClick={() => void startNewSession()}>Sí</button>
-                  <button className="btn btn-ghost btn-sm" type="button" onClick={() => setConfirmNew(false)}>No</button>
-                </span>
-              )
-            : (
-                <button
-                  className="btn btn-ghost btn-sm"
-                  type="button"
-                  onClick={() => setConfirmNew(true)}
-                  disabled={isSending || sessionState === "loading"}
-                  aria-label="Nueva conversación"
-                >
-                  {mobile ? <Icon name="chat" size={18} /> : "Nueva conversación"}
-                </button>
-              )}
           {headerExtra}
         </div>
       </header>
@@ -296,7 +262,7 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
               </button>
             )}
             {sessionState === "failed" && (
-              <button className="btn btn-secondary btn-sm" type="button" onClick={() => setSessionAttempt((n) => n + 1)}>
+              <button className="btn btn-secondary btn-sm" type="button" onClick={chatSession.retry}>
                 Reintentar
               </button>
             )}
