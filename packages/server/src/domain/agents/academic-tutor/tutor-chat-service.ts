@@ -6,6 +6,7 @@ import { MaterialRepository } from "../../materials/material.ts";
 import { AgentSession, SessionNotFound, SessionRepository, type AgentMessage } from "../harness/index.ts";
 import { makeAcademicTutorHarness } from "../academic-tutor.ts";
 import { describeUiContext } from "./ui-context.ts";
+import { tutorOptions } from "./tutor-options.ts";
 
 /**
  * Runs tutor turns against a persisted session.
@@ -34,7 +35,7 @@ export const TutorChatServiceLive = Layer.effect(
     const materialRepository = yield* MaterialRepository;
     const artifactRepository = yield* ArtifactRepository;
     const sessions = yield* SessionRepository;
-    const harness = makeAcademicTutorHarness(materialRepository, artifactRepository);
+    const harness = makeAcademicTutorHarness(materialRepository, artifactRepository, yield* tutorOptions);
     const session = AgentSession.make(harness);
 
     const persistTurn = (sessionId: string, messages: readonly AgentMessage[]) =>
@@ -49,7 +50,7 @@ export const TutorChatServiceLive = Layer.effect(
       input.context?.openArtifactId === undefined
         ? Effect.succeed(undefined)
         : artifactRepository.getArtifact(input.context.openArtifactId).pipe(
-            Effect.map((artifact) => describeUiContext(artifact, input.context?.openQuestionId)),
+            Effect.map((artifact) => describeUiContext(artifact, { openQuestionId: input.context?.openQuestionId, openNodeId: input.context?.openNodeId })),
             Effect.catch(() => Effect.succeed(undefined))
           );
 

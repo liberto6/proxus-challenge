@@ -51,6 +51,10 @@ const materialsCase = Effect.gen(function* () {
     criterion("rejected-files-leave-no-trace", stillOne.length === 1 && leftovers.length === 0, `materials: ${stillOne.length}, leftovers: ${leftovers.length}`)
   );
 
+  // One page rendered for the interface preview (what `GET /materials/:id/pages/:page` returns).
+  const preview = yield* materials.renderPages(saved.id, [2]);
+  results.push(criterion("render-single-page-for-preview", preview.pages.length === 1 && preview.pages[0]?.page === 2 && preview.pages[0].data.startsWith("data:image/png;base64,"), `pages: ${preview.pages.map((page) => page.page).join(",")}`));
+
   // Hand-copied file without sidecar keeps working with its file name as id.
   yield* fs.writeFile(path.join(directory, "manual.pdf"), fixture);
   const withManual = yield* materials.list();

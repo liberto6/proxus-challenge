@@ -10,7 +10,9 @@ import { AgentSession, AgentSessionListResponse } from "../schemas/agent-session
 /** What the student has open in the interface while asking, so the tutor can refer to it. */
 export const TutorUiContext = Schema.Struct({
   openArtifactId: Schema.optional(Schema.String),
-  openQuestionId: Schema.optional(Schema.String)
+  openQuestionId: Schema.optional(Schema.String),
+  /** Node of the open diagram the student is looking at. */
+  openNodeId: Schema.optional(Schema.String)
 });
 export type TutorUiContext = typeof TutorUiContext.Type;
 

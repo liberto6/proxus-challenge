@@ -1,5 +1,5 @@
 import { useAtomRefresh } from "@effect/atom-react";
-import type { AgentMessage, ArtifactKind } from "@proxus/shared";
+import { isArtifactKind, type AgentMessage, type ArtifactKind } from "@proxus/shared";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Streamdown } from "streamdown";
 import "streamdown/styles.css";
@@ -15,7 +15,7 @@ import { Icon, KindIcon, kindLabel, Mascot } from "./icons.tsx";
 const starterPrompts = [
   "Resume mis materiales en pocas líneas",
   "Crea un quiz corto a partir de mis materiales",
-  "Explícame paso a paso el concepto más difícil de mis apuntes"
+  "Hazme un esquema de mis apuntes"
 ] as const;
 
 interface TurnError {
@@ -28,6 +28,8 @@ interface TurnError {
 export interface ChatPrefill {
   readonly text: string;
   readonly nonce: number;
+  /** Diagram node the question is about; sent as UI context with the next turn. */
+  readonly nodeId?: string;
 }
 
 interface ChatProps {
@@ -52,6 +54,7 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
   const [progress, setProgress] = useState<readonly string[]>([]);
   const [error, setError] = useState<TurnError | undefined>();
   const [confirmNew, setConfirmNew] = useState(false);
+  const [focusedNodeId, setFocusedNodeId] = useState<string | undefined>();
   const refreshArtifacts = useAtomRefresh(artifactsQuery);
   const refreshMaterials = useAtomRefresh(materialsQuery);
   const pendingInvalidations = useRef<Array<ReturnType<typeof invalidationsForToolCall>>>([]);
@@ -119,6 +122,7 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
   useEffect(() => {
     if (prefill === undefined) return;
     setInput(prefill.text);
+    setFocusedNodeId(prefill.nodeId);
     textarea.current?.focus();
   }, [prefill]);
 
@@ -161,7 +165,9 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
     let turnFailed: TurnError | undefined;
 
     try {
-      const context = selectedArtifactId === null ? undefined : { openArtifactId: selectedArtifactId };
+      const context = selectedArtifactId === null
+        ? undefined
+        : { openArtifactId: selectedArtifactId, ...(focusedNodeId === undefined ? {} : { openNodeId: focusedNodeId }) };
       for await (const event of streamTutorMessage({ sessionId, input: trimmed, maxSteps: 8, ...(context === undefined ? {} : { context }) }, controller.signal)) {
         switch (event.type) {
           case "message": {
@@ -195,6 +201,7 @@ export function Chat({ selectedArtifactId, onSelectArtifact, hasMaterials, onReq
 
       if (turnFailed === undefined) {
         setInput("");
+        setFocusedNodeId(undefined);
       } else {
         // Drop the failed turn so a retry does not duplicate the user message.
         setMessages(historyBefore);
@@ -392,7 +399,7 @@ function EmptyState({ loading, hasMaterials, onRequestUpload, onPrompt }: {
           Sube tus apuntes y <span className="hl">empieza a estudiar</span> con tu tutor
         </h2>
         <p className="font-semibold text-ink-muted">
-          Leo tus PDFs, te explico lo que no entiendes y te preparo quizzes y tests corregidos al momento.
+          Leo tus PDFs, te explico lo que no entiendes, te dibujo esquemas y te preparo quizzes y tests corregidos al momento.
         </p>
         <button className="btn btn-primary mt-1 h-11 text-[15px]" type="button" onClick={onRequestUpload}>
           <Icon name="upload" size={18} strokeWidth={2.2} /> Subir mi primer PDF
@@ -410,7 +417,7 @@ function EmptyState({ loading, hasMaterials, onRequestUpload, onPrompt }: {
     <div className="m-auto flex w-full max-w-[640px] flex-col items-center gap-3.5 py-6 text-center">
       <Mascot size={72} />
       <h2 className="font-display font-semibold text-[26px] leading-tight">¿Qué estudiamos hoy?</h2>
-      <p className="font-semibold text-ink-muted">Pregunta sobre tus materiales o pídeme una nota, un quiz o un test.</p>
+      <p className="font-semibold text-ink-muted">Pregunta sobre tus materiales o pídeme un esquema, una nota, un quiz o un test.</p>
       <div className="mt-1 grid w-full grid-cols-3 gap-3 max-md:grid-cols-1">
         {starterPrompts.map((prompt) => (
           <button
@@ -513,21 +520,26 @@ interface CreatedArtifact {
   readonly id: string;
   readonly kind: ArtifactKind;
   readonly title: string;
-  readonly questionCount: number | undefined;
+  /** "3 preguntas", "6 conceptos"; undefined for notes. */
+  readonly size: string | undefined;
 }
-
-const isKind = (value: unknown): value is ArtifactKind => value === "note" || value === "quiz" || value === "test";
 
 /** Artifacts created during a turn, taken from `artifacts create` results. */
 const createdArtifacts = (messages: readonly AgentMessage[]): ReadonlyArray<CreatedArtifact> =>
   messages.flatMap((message) => {
     if (message.role !== "tool-result" || message.isFailure) return [];
     const result = typeof message.result === "string" ? safeJson(message.result) : message.result;
-    const typed = result as { created?: unknown; id?: unknown; kind?: unknown; title?: unknown; questionCount?: unknown } | undefined;
-    return typed?.created === true && typeof typed.id === "string" && isKind(typed.kind) && typeof typed.title === "string"
-      ? [{ id: typed.id, kind: typed.kind, title: typed.title, questionCount: typeof typed.questionCount === "number" ? typed.questionCount : undefined }]
-      : [];
+    const typed = result as { created?: unknown; id?: unknown; kind?: unknown; title?: unknown; questionCount?: unknown; nodeCount?: unknown } | undefined;
+    if (typed?.created !== true || typeof typed.id !== "string" || !isArtifactKind(typed.kind) || typeof typed.title !== "string") return [];
+    const size = typeof typed.questionCount === "number"
+      ? pluralize(typed.questionCount, "pregunta", "preguntas")
+      : typeof typed.nodeCount === "number"
+        ? pluralize(typed.nodeCount, "concepto", "conceptos")
+        : undefined;
+    return [{ id: typed.id, kind: typed.kind, title: typed.title, size }];
   });
+
+const openArticle: Record<ArtifactKind, string> = { note: "la nota", quiz: "el quiz", test: "el test", diagram: "el esquema" };
 
 const safeJson = (text: string): unknown => {
   try {
@@ -608,11 +620,11 @@ function ActivityGroup({ messages, onSelectArtifact, mobile }: {
           <div className="min-w-0 flex-1">
             <div className="font-extrabold text-[15px] leading-tight">{artifact.title}</div>
             <div className="font-semibold text-ink-muted text-sm">
-              {kindLabel[artifact.kind]}{artifact.questionCount !== undefined ? ` · ${pluralize(artifact.questionCount, "pregunta", "preguntas")}` : ""}
+              {kindLabel[artifact.kind]}{artifact.size !== undefined ? ` · ${artifact.size}` : ""}
             </div>
           </div>
           <button className={`btn btn-primary btn-sm ${mobile ? "h-10 w-full" : ""}`} type="button" onClick={() => onSelectArtifact(artifact.id)}>
-            {mobile ? `Abrir ${kindLabel[artifact.kind].toLowerCase() === "nota" ? "la nota" : `el ${kindLabel[artifact.kind].toLowerCase()}`}` : "Abrir"}
+            {mobile ? `Abrir ${openArticle[artifact.kind]}` : "Abrir"}
           </button>
         </div>
       ))}

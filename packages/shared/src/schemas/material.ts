@@ -23,6 +23,17 @@ export const MaterialPageImages = Schema.Struct({
 });
 export type MaterialPageImages = typeof MaterialPageImages.Type;
 
+/** One rendered page, for previews in the interface (`GET /materials/:id/pages/:page`). */
+export const MaterialPagePreview = Schema.Struct({
+  materialId: Schema.String,
+  page: Schema.Number,
+  pageCount: Schema.Number,
+  mediaType: Schema.Literal("image/png"),
+  /** Data URI of the rendered page. */
+  data: Schema.String
+});
+export type MaterialPagePreview = typeof MaterialPagePreview.Type;
+
 export const MaterialListResponse = Schema.Struct({
   materials: Schema.Array(PdfMaterial)
 });

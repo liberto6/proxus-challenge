@@ -19,7 +19,7 @@ POST /api/tutor/chat              # un turno, respuesta completa
 POST /api/tutor/chat/stream       # un turno, eventos NDJSON
 ```
 
-La conversación se guarda en el servidor (`.data/agent-sessions/<id>.json`). Cada turno envía `{ sessionId, input, maxSteps?, context? }`, donde `context` indica qué artefacto (y pregunta) tiene abierto el alumno para que el tutor pueda referirse a ello sin preguntar; se inyecta como nota de sistema de ese turno y no se persiste. Cada turno: el servidor carga el historial, ejecuta el turno y persiste sus mensajes al terminar. Un turno que acaba en `error` no persiste nada, así que reintentar no duplica el mensaje del alumno. La web solo recuerda el `sessionId` en `localStorage`.
+La conversación se guarda en el servidor (`.data/agent-sessions/<id>.json`). Cada turno envía `{ sessionId, input, maxSteps?, context? }`, donde `context` indica qué artefacto (y pregunta o nodo de un diagrama) tiene abierto el alumno para que el tutor pueda referirse a ello sin preguntar; se inyecta como nota de sistema de ese turno y no se persiste. Cada turno: el servidor carga el historial, ejecuta el turno y persiste sus mensajes al terminar. Un turno que acaba en `error` no persiste nada, así que reintentar no duplica el mensaje del alumno. La web solo recuerda el `sessionId` en `localStorage`.
 
 `/stream` devuelve NDJSON con eventos `AgentEvent` (`packages/shared/src/schemas/agent-event.ts`):
 
@@ -39,6 +39,7 @@ La ruta streaming está implementada manualmente para soportar eventos increment
 ```http
 GET    /api/materials/          # lista
 GET    /api/materials/:id
+GET    /api/materials/:id/pages/:page   # una página renderizada (PNG como data URI); 404 sin material, 400 fuera de rango
 POST   /api/materials/          # multipart: file (PDF, máx. 20 MB) y title opcional -> PdfMaterial
 DELETE /api/materials/:id       # 404 si no existe
 ```
@@ -64,6 +65,26 @@ Todo artifact puede llevar `source: { materialId, pages }` (de qué material y p
 - `note`: contenido markdown.
 - `quiz`: preguntas cerradas.
 - `test`: preguntas cerradas o `short-answer`.
+- `diagram`: resumen visual. `diagramType` es `process` (pasos ordenados en `mainPath`, `cyclic` si se cierra, relaciones laterales en `edges`) o `concept-map` (`rootId` y aristas etiquetadas). Cada nodo lleva `id`, `label`, `description` y `pages`; `source` es obligatorio. Límites en `diagramLimits` (3-12 nodos, 20 aristas, etiquetas de 2-40 caracteres, descripciones de 20-240). Los diagramas no admiten intentos.
+
+```json
+{
+  "kind": "diagram",
+  "title": "El ciclo del agua: fases",
+  "diagramType": "process",
+  "summary": "Las cuatro fases se encadenan en un bucle.",
+  "source": { "materialId": "ciclo-del-agua-a1b2c3", "pages": [1, 2] },
+  "nodes": [
+    { "id": "evaporacion", "label": "Evaporación", "description": "El calor del sol convierte el agua en vapor que sube a la atmósfera.", "pages": [1] },
+    { "id": "condensacion", "label": "Condensación", "description": "El vapor se enfría en altura y forma nubes de gotas diminutas.", "pages": [1] },
+    { "id": "precipitacion", "label": "Precipitación", "description": "Las gotas crecen y caen como lluvia, nieve o granizo.", "pages": [2] },
+    { "id": "transpiracion", "label": "Transpiración", "description": "Las plantas liberan vapor que se suma al de la evaporación.", "pages": [2] }
+  ],
+  "mainPath": ["evaporacion", "condensacion", "precipitacion"],
+  "cyclic": true,
+  "edges": [{ "from": "transpiracion", "to": "condensacion", "label": "aporta vapor" }]
+}
+```
 
 Tipos de pregunta:
 

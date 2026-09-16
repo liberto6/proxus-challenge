@@ -20,7 +20,8 @@ export const describeToolMessage = (message: AgentMessage): string => {
 /** Student-facing names for the tutor's skills; unknown ones fall back to the slug. */
 const skillLabels: Record<string, string> = {
   "use-uploaded-materials": "cómo usar tus materiales",
-  "create-study-artifacts": "cómo crear notas, quizzes y tests"
+  "create-study-artifacts": "cómo crear notas, quizzes y tests",
+  "teach-visually": "cuándo y cómo dibujar un esquema"
 };
 
 /**
@@ -46,6 +47,7 @@ const completedForm = (label: string): string => {
     "Escribiendo una nota": "Nota escrita",
     "Preparando un test": "Test preparado",
     "Preparando un quiz": "Quiz preparado",
+    "Dibujando un esquema": "Esquema dibujado",
     "Corrigiendo tus respuestas": "Respuestas corregidas",
     "Revisando tus artefactos": "Artefactos revisados"
   };
@@ -68,8 +70,14 @@ const describeToolCall = (name: string, input: unknown): string => {
     return "Consultando tus materiales";
   }
   if (/^artifacts\s+create\b/.test(command)) {
-    const kind = /"kind"\s*:\s*"(note|quiz|test)"/.exec(command)?.[1];
-    return kind === "note" ? "Escribiendo una nota" : kind === "test" ? "Preparando un test" : "Preparando un quiz";
+    const kind = /"kind"\s*:\s*"(note|quiz|test|diagram)"/.exec(command)?.[1];
+    return kind === "note"
+      ? "Escribiendo una nota"
+      : kind === "test"
+        ? "Preparando un test"
+        : kind === "diagram"
+          ? "Dibujando un esquema"
+          : "Preparando un quiz";
   }
   if (/^artifacts\s+(submit|grade)\b/.test(command)) {
     return "Corrigiendo tus respuestas";

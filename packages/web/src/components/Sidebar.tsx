@@ -229,7 +229,7 @@ export function PracticeList({ selectedArtifactId, onSelectArtifact }: {
           onSuccess: ({ value }) => value.artifacts.length === 0
             ? (
                 <p className="rounded-md border-2 border-line border-dashed p-3.5 text-center font-semibold text-ink-subtle text-sm">
-                  Las notas, quizzes y tests que cree el tutor aparecerán aquí.
+                  Los esquemas, notas, quizzes y tests que cree el tutor aparecerán aquí.
                 </p>
               )
             : value.artifacts.map((artifact) => (

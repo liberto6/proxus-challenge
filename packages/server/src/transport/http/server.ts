@@ -7,6 +7,7 @@ import { LanguageModel } from "effect/unstable/ai";
 import { ProxusApi, TutorChatRequest, TutorChatStreamEvent } from "@proxus/shared";
 import { GeminiModel } from "../../infra/agents/gemini-language-model.ts";
 import { TutorChatService, TutorChatServiceLive } from "../../domain/agents/academic-tutor/tutor-chat-service.ts";
+import { TutorOptions } from "../../domain/agents/academic-tutor/tutor-options.ts";
 import { FileArtifactRepository } from "../../infra/artifacts/file-artifact-repository.ts";
 import { FileSessionRepository } from "../../infra/agents/file-session-repository.ts";
 import { FileMaterialRepository } from "../../infra/materials/file-material-repository.ts";
@@ -51,7 +52,9 @@ const TutorStreamRoute = HttpRouter.add("POST", "/api/tutor/chat/stream", () =>
 const Routes = Layer.mergeAll(ApiRoutes, DocsRoute, TutorStreamRoute);
 
 const DomainLive = Layer.mergeAll(
-  TutorChatServiceLive,
+  TutorChatServiceLive.pipe(Layer.provide(Layer.succeed(TutorOptions, {
+    autoDiagram: process.env.TUTOR_AUTO_DIAGRAM !== "0"
+  }))),
   GeminiModel
 );
 

@@ -35,8 +35,8 @@ export function App() {
     setMaterialsOpen(false);
   };
   const closeArtifact = () => setSelectedArtifactId(null);
-  const askTutor = (text: string) => {
-    setPrefill({ text, nonce: Date.now() });
+  const askTutor = (text: string, context?: { readonly nodeId: string }) => {
+    setPrefill({ text, nonce: Date.now(), ...(context === undefined ? {} : { nodeId: context.nodeId }) });
     if (layout === "mobile") setMobileTab("chat");
     if (layout === "compact") setSelectedArtifactId(null);
   };

@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { Multipart } from "effect/unstable/http";
 import { HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
-import { MaterialListResponse, PdfMaterial } from "../schemas/material.ts";
+import { MaterialListResponse, MaterialPagePreview, PdfMaterial } from "../schemas/material.ts";
 
 export const maxMaterialUploadBytes = 20 * 1024 * 1024;
 
@@ -21,6 +21,14 @@ export class MaterialsApi extends HttpApiGroup.make("materials")
         id: Schema.String
       },
       success: PdfMaterial
+    }),
+    HttpApiEndpoint.get("getPage", "/:id/pages/:page", {
+      params: {
+        id: Schema.String,
+        page: Schema.NumberFromString
+      },
+      success: MaterialPagePreview,
+      error: [HttpApiError.NotFound, HttpApiError.BadRequest]
     }),
     HttpApiEndpoint.post("upload", "/", {
       payload: MaterialUpload,

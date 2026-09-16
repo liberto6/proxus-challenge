@@ -3,7 +3,8 @@ import { MaterialRepository } from "../materials/material.ts";
 import { ArtifactRepository } from "../artifacts/artifact.ts";
 import { makeMaterialCommands } from "./academic-tutor/material-commands.ts";
 import { makeArtifactCommands } from "./academic-tutor/artifact-commands.ts";
-import { AcademicTutorSkills } from "./academic-tutor/skills/index.ts";
+import { makeAcademicTutorSkills } from "./academic-tutor/skills/index.ts";
+import { defaultTutorOptions, type TutorOptions } from "./academic-tutor/tutor-options.ts";
 
 export const academicTutorSystemPrompt = `You are an academic tutor agent.
 
@@ -13,12 +14,13 @@ Only describe or cite the content of material pages you have rendered in this co
 
 export const makeAcademicTutorHarness = (
   materialRepository: MaterialRepository,
-  artifactRepository: ArtifactRepository
+  artifactRepository: ArtifactRepository,
+  options: TutorOptions = defaultTutorOptions
 ) => AgentHarness.make({
   name: academicTutorSystemPrompt,
-  skills: AcademicTutorSkills,
+  skills: makeAcademicTutorSkills(options),
   commands: [
     makeMaterialCommands(materialRepository),
-    makeArtifactCommands(artifactRepository)
+    makeArtifactCommands(artifactRepository, materialRepository)
   ]
 });

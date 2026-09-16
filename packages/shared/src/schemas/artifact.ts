@@ -77,6 +77,62 @@ const artifactBase = {
   createdAt: Schema.optional(Schema.String)
 };
 
+// --- Diagrams -------------------------------------------------------------------
+
+/**
+ * Size limits of a diagram. The domain validator enforces them and the tutor's
+ * skill quotes them; keeping them here means both read the same numbers.
+ */
+export const diagramLimits = {
+  nodes: { min: 3, max: 12 },
+  edges: { max: 20 },
+  label: { min: 2, max: 40 },
+  description: { min: 20, max: 240 },
+  summary: { min: 20, max: 300 },
+  edgeLabel: { min: 2, max: 30 },
+  pagesPerNode: { min: 1, max: 6 }
+} as const;
+
+/** A concept in the diagram, anchored to the material pages that explain it. */
+export const DiagramNode = Schema.Struct({
+  id: Schema.String,
+  label: Schema.String,
+  description: Schema.String,
+  pages: Schema.Array(Schema.Number)
+});
+export type DiagramNode = typeof DiagramNode.Type;
+
+/** A relation between two nodes. The label is the proposition ("aporta vapor"). */
+export const DiagramEdge = Schema.Struct({
+  from: Schema.String,
+  to: Schema.String,
+  label: Schema.optional(Schema.String)
+});
+export type DiagramEdge = typeof DiagramEdge.Type;
+
+/**
+ * - `process`: ordered steps (`mainPath`, whose edges are implicit) plus side
+ *   relations in `edges`; `cyclic` closes the last step back to the first.
+ * - `concept-map`: a central concept (`rootId`) and labelled relations.
+ */
+export const DiagramType = Schema.Union([
+  Schema.Literal("process"),
+  Schema.Literal("concept-map")
+]);
+export type DiagramType = typeof DiagramType.Type;
+
+// The model describes semantics only: no positions, sizes or colours. The web
+// computes the geometry from the graph.
+const diagramFields = {
+  diagramType: DiagramType,
+  summary: Schema.String,
+  nodes: Schema.Array(DiagramNode),
+  edges: Schema.Array(DiagramEdge),
+  mainPath: Schema.optional(Schema.Array(Schema.String)),
+  cyclic: Schema.optional(Schema.Boolean),
+  rootId: Schema.optional(Schema.String)
+};
+
 // --- Artifacts, by kind (the registry) ------------------------------------------
 
 export const NoteArtifact = Schema.Struct({
@@ -100,25 +156,35 @@ export const TestArtifact = Schema.Struct({
 });
 export type TestArtifact = typeof TestArtifact.Type;
 
+export const DiagramArtifact = Schema.Struct({
+  kind: Schema.Literal("diagram"),
+  ...artifactBase,
+  ...diagramFields
+});
+export type DiagramArtifact = typeof DiagramArtifact.Type;
+
 export const ArtifactByKind = {
   note: NoteArtifact,
   quiz: QuizArtifact,
-  test: TestArtifact
+  test: TestArtifact,
+  diagram: DiagramArtifact
 } as const;
 
-export const artifactKinds = ["note", "quiz", "test"] as const satisfies ReadonlyArray<keyof typeof ArtifactByKind>;
+export const artifactKinds = ["note", "quiz", "test", "diagram"] as const satisfies ReadonlyArray<keyof typeof ArtifactByKind>;
 export type ArtifactKind = (typeof artifactKinds)[number];
 
 export const ArtifactKind = Schema.Union([
   Schema.Literal("note"),
   Schema.Literal("quiz"),
-  Schema.Literal("test")
+  Schema.Literal("test"),
+  Schema.Literal("diagram")
 ]);
 
 export const Artifact = Schema.Union([
   ArtifactByKind.note,
   ArtifactByKind.quiz,
-  ArtifactByKind.test
+  ArtifactByKind.test,
+  ArtifactByKind.diagram
 ]);
 export type Artifact = typeof Artifact.Type;
 
@@ -167,16 +233,25 @@ export const CreateTestArtifactInput = Schema.Struct({
 });
 export type CreateTestArtifactInput = typeof CreateTestArtifactInput.Type;
 
+export const CreateDiagramArtifactInput = Schema.Struct({
+  kind: Schema.Literal("diagram"),
+  ...createBase,
+  ...diagramFields
+});
+export type CreateDiagramArtifactInput = typeof CreateDiagramArtifactInput.Type;
+
 export const CreateArtifactInputByKind = {
   note: CreateNoteArtifactInput,
   quiz: CreateQuizArtifactInput,
-  test: CreateTestArtifactInput
+  test: CreateTestArtifactInput,
+  diagram: CreateDiagramArtifactInput
 } as const;
 
 export const CreateArtifactInput = Schema.Union([
   CreateArtifactInputByKind.note,
   CreateArtifactInputByKind.quiz,
-  CreateArtifactInputByKind.test
+  CreateArtifactInputByKind.test,
+  CreateArtifactInputByKind.diagram
 ]);
 export type CreateArtifactInput = typeof CreateArtifactInput.Type;
 

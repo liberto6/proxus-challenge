@@ -7,6 +7,7 @@ El tutor ayuda a estudiar usando materiales locales y creando artefactos de apre
 - `note`: apunte/explicación.
 - `quiz`: ejercicio corto, cerrado y autocorregible.
 - `test`: evaluación más completa; puede incluir respuesta corta.
+- `diagram`: resumen visual de un tema (proceso o mapa conceptual) con cada concepto anclado a las páginas que lo explican. Se explora en el panel; no se corrige.
 
 ## Archivos principales
 
@@ -19,11 +20,14 @@ Skills:
 
 - `packages/server/src/domain/agents/academic-tutor/skills/use-uploaded-materials.ts`
 - `packages/server/src/domain/agents/academic-tutor/skills/create-study-artifacts.ts`
+- `packages/server/src/domain/agents/academic-tutor/skills/teach-visually.ts`
 
 Commands:
 
 - `packages/server/src/domain/agents/academic-tutor/material-commands.ts`
 - `packages/server/src/domain/agents/academic-tutor/artifact-commands.ts`
+
+Validación de diagramas: `packages/server/src/domain/artifacts/diagram.ts`.
 
 ## Modelo mental
 
@@ -48,9 +52,9 @@ materials view <materialId> <pages>
 Artifacts:
 
 ```txt
-artifacts list
+artifacts list [note|quiz|test|diagram]
 artifacts show <artifactId>
-artifacts create '<json>'          # admite source: { materialId, pages }
+artifacts create '<json>'          # admite source: { materialId, pages }; los diagramas lo exigen
 artifacts submit '<json>'
 artifacts attempts [artifactId]
 artifacts grade <attemptId>
@@ -73,9 +77,21 @@ artifacts grade <attemptId>
 
 El tutor solo puede describir o citar páginas que haya renderizado en la conversación. La skill lo exige y el harness lo comprueba (`harness/grounding.ts`): si la respuesta cita páginas no renderizadas, se descarta, se inyecta un recordatorio de sistema y se repite el paso (una vez). Si la respuesta persiste sin que el modelo haya intentado leer ni haya comprobado que no hay materiales, se emite con un aviso visible al alumno. Límite: solo se detectan citas explícitas de página. Evals: `eval:tutor:grounding` (guardia, sin API) y sus 6 casos en vivo (`GROUNDING_LIVE=1`).
 
+## Diagramas: cuándo dibuja el tutor y qué se valida
+
+La skill `teach-visually` reúne la decisión y las reglas:
+
+- Dibuja cuando el material presenta pasos o fases (`process`, con `cyclic: true` si el último paso vuelve al primero) o conceptos que se relacionan entre sí, incluidas jerarquías (`concept-map` con un concepto raíz y toda arista etiquetada). No dibuja listas de fechas, definiciones sueltas ni tablas; en esos casos lo dice y ofrece una nota o un quiz.
+- Con `TUTOR_AUTO_DIAGRAM=1` (valor por defecto) el tutor crea el diagrama por iniciativa propia al explicar un proceso o una red de conceptos, en el mismo turno y tras leer las páginas. Con `0`, solo lo crea a petición del alumno.
+- El modelo describe semántica (nodos con etiqueta, descripción y páginas; aristas con etiqueta; camino principal o raíz). La geometría la calcula la web.
+
+Todo diagrama pasa por `validateDiagram` antes de persistirse: ids únicos, límites de tamaño (`diagramLimits` en `shared`), aristas sobre nodos existentes, cada nodo con 1-6 páginas dentro de `source.pages`, `source.pages` dentro del rango del material y **leídas en la conversación** (el comando consulta las páginas renderizadas del turno, `RenderedPagesRef` en `harness/grounding.ts`), forma coherente por tipo y rechazo de "listas disfrazadas" (estrella con todas las aristas iguales, o proceso con más conceptos sueltos que pasos). Si algo falla, `artifacts create` devuelve al modelo un texto `DIAGRAM_INVALID` con todos los problemas y una pista por cada uno; la skill limita la reparación a dos intentos. El eval `eval:tutor:diagram` cubre validación, normalización, bucle de reparación y etiquetas sin llamar a la API; con `DIAGRAM_LIVE=1` añade seis casos contra el modelo real.
+
+Límite conocido: la validación comprueba estructura y anclaje, no que la descripción de cada nodo sea fiel al PDF; eso se mide en el eval en vivo por cobertura de conceptos del fixture.
+
 ## Contexto de la interfaz
 
-La web envía en cada turno qué artefacto tiene abierto el alumno (`context.openArtifactId`, y opcionalmente `openQuestionId`). El servicio carga el artefacto y añade una nota de sistema solo para ese turno (`academic-tutor/ui-context.ts`), así "explícame la pregunta 2" se entiende sin nombrar el quiz. Al crear un artefacto, el comando devuelve solo una confirmación compacta (id, tipo, título, número de preguntas) y la skill indica responder con un resumen breve sin repetir el contenido: el alumno lo abre desde el panel, donde el chat ofrece un botón "Abrir".
+La web envía en cada turno qué artefacto tiene abierto el alumno (`context.openArtifactId`, y opcionalmente `openQuestionId` o, en un diagrama, `openNodeId`). El servicio carga el artefacto y añade una nota de sistema solo para ese turno (`academic-tutor/ui-context.ts`), así "explícame la pregunta 2" se entiende sin nombrar el quiz. Al crear un artefacto, el comando devuelve solo una confirmación compacta (id, tipo, título, número de preguntas) y la skill indica responder con un resumen breve sin repetir el contenido: el alumno lo abre desde el panel, donde el chat ofrece un botón "Abrir".
 
 ## Trazas en servidor
 
@@ -93,6 +109,7 @@ Implementación en `packages/server/src/domain/agents/harness/trace.ts`; el eval
 ```env
 GOOGLE_GENERATIVE_AI_API_KEY=...
 GEMINI_MODEL=gemini-3.5-flash
+TUTOR_AUTO_DIAGRAM=1
 ```
 
 ## Buenas prácticas al tocar AI

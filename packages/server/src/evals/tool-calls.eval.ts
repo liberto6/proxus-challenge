@@ -264,7 +264,7 @@ const uiContextCase = Effect.gen(function* () {
       { type: "true-false" as const, id: "q2", prompt: "La condensación forma nubes.", correctAnswer: true, explanation: "Sí." }
     ]
   };
-  const note = describeUiContext(quiz, "q2");
+  const note = describeUiContext(quiz, { openQuestionId: "q2" });
 
   const received = yield* Ref.make<readonly LanguageModel.ProviderOptions[]>([]);
   const materialRepository = yield* MaterialRepository;
@@ -308,13 +308,20 @@ const artifactSchemaCase = Effect.sync(() => {
     kind: "quiz", id: "old", title: "Sin origen", questions: []
   });
   const unknownKind = Schema.decodeUnknownExit(Artifact)({
-    kind: "diagram", id: "d1", title: "Mapa", nodes: []
+    kind: "mindmap", id: "d1", title: "Mapa", nodes: []
+  });
+  const diagram = Schema.decodeUnknownExit(Artifact)({
+    kind: "diagram", id: "d1", title: "Ciclo", diagramType: "process", summary: "Cuatro fases encadenadas en un ciclo.",
+    source: { materialId: "ciclo-del-agua", pages: [1, 2] },
+    nodes: [{ id: "evaporacion", label: "Evaporación", description: "El sol convierte el agua en vapor.", pages: [1] }],
+    edges: [], mainPath: ["evaporacion"], cyclic: true
   });
 
   return [
     criterion("artifact-keeps-source-and-stamps-createdAt", created.source?.materialId === "ciclo-del-agua" && created.source.pages.length === 2 && typeof created.createdAt === "string", `source: ${JSON.stringify(created.source)}, createdAt: ${created.createdAt}`),
     criterion("artifact-without-provenance-still-decodes", legacy._tag === "Success", legacy._tag),
-    criterion("artifact-unknown-kind-rejected", unknownKind._tag === "Failure" && !isArtifactKind("diagram") && artifactKinds.length === 3, `kinds: ${artifactKinds.join(",")}`)
+    criterion("artifact-unknown-kind-rejected", unknownKind._tag === "Failure" && !isArtifactKind("mindmap") && artifactKinds.length === 4, `kinds: ${artifactKinds.join(",")}`),
+    criterion("artifact-diagram-kind-decodes", diagram._tag === "Success" && isArtifactKind("diagram"), diagram._tag)
   ];
 });
 

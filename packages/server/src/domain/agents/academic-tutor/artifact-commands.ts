@@ -1,5 +1,8 @@
-import { Effect, Schema } from "effect";
+import { Data, Effect, Schema } from "effect";
 import * as AgentCli from "../harness/index.ts";
+import { renderedPagesOf } from "../harness/grounding.ts";
+import type { MaterialRepository } from "../../materials/material.ts";
+import { normalizeDiagramInput, renderDiagramIssues, validateDiagram } from "../../artifacts/diagram.ts";
 import {
   Artifact,
   ArtifactAttempt,
@@ -12,6 +15,7 @@ import {
   QuestionNotFound,
   AnswerTypeMismatch,
   SubmitAttemptInput,
+  artifactKinds,
   type ArtifactRepository
 } from "../../artifacts/artifact.ts";
 
@@ -24,9 +28,21 @@ const renderCreatedArtifact = (artifact: Artifact) => JSON.stringify({
   id: artifact.id,
   kind: artifact.kind,
   title: artifact.title,
-  ...(artifact.kind === "note" ? {} : { questionCount: artifact.questions.length }),
+  ...createdArtifactSize(artifact),
   note: "The student can open it from the panel. Do not repeat its content in the chat."
 }, null, 2);
+
+const createdArtifactSize = (artifact: Artifact) => {
+  switch (artifact.kind) {
+    case "note":
+      return {};
+    case "quiz":
+    case "test":
+      return { questionCount: artifact.questions.length };
+    case "diagram":
+      return { diagramType: artifact.diagramType, nodeCount: artifact.nodes.length, edgeCount: artifact.edges.length };
+  }
+};
 const renderAttempt = (attempt: ArtifactAttempt) => JSON.stringify(attempt, null, 2);
 
 const renderArtifactError = (error: ArtifactNotFound | AttemptNotFound | ArtifactTypeMismatch | QuestionNotFound | AnswerTypeMismatch | ArtifactRepositoryStorageError | ArtifactRepositorySerializationError) => {
@@ -95,7 +111,7 @@ const normalizeQuestion = (question: unknown) =>
 
 const normalizeCreateArtifactInput = (input: unknown) => {
   if (!isRecord(input) || !Array.isArray(input.questions)) {
-    return input;
+    return normalizeDiagramInput(input);
   }
 
   return {
@@ -111,19 +127,59 @@ const decodeCreateArtifactInput = (json: string) =>
     Effect.mapError((reason) => new ArtifactRepositorySerializationError({ reason }))
   );
 
+/** A diagram the model must fix before it is persisted; the text goes back to the model as the tool result. */
+class DiagramRejected extends Data.TaggedError("DiagramRejected")<{
+  readonly report: string;
+}> {}
+
+/**
+ * Diagrams are checked against the material (page range) and the pages read in
+ * this conversation, so a node can only cite what the tutor has actually seen.
+ */
+const checkDiagram = (input: CreateArtifactInput, materials: MaterialRepository): Effect.Effect<CreateArtifactInput, DiagramRejected> =>
+  Effect.gen(function* () {
+    if (input.kind !== "diagram") {
+      return input;
+    }
+
+    const materialId = input.source?.materialId;
+    const pageCount = materialId === undefined
+      ? undefined
+      : yield* materials.get(materialId).pipe(
+          Effect.map((material) => material.pageCount),
+          Effect.catch(() => Effect.succeed(undefined))
+        );
+    if (materialId !== undefined && pageCount === undefined) {
+      return yield* new DiagramRejected({
+        report: renderDiagramIssues([{
+          code: "source-required",
+          message: `Material "${materialId}" does not exist. Use the id from \`materials list\`.`
+        }])
+      });
+    }
+
+    const renderedPages = materialId === undefined ? undefined : yield* renderedPagesOf(materialId);
+    const issues = validateDiagram(input, { pageCount, renderedPages });
+    if (issues.length > 0) {
+      return yield* new DiagramRejected({ report: renderDiagramIssues(issues) });
+    }
+    return input;
+  });
+
 const decodeSubmitAttemptInput = (json: string) =>
   Schema.decodeUnknownEffect(SubmitAttemptInputFromJson)(json).pipe(
     Effect.mapError((reason) => new ArtifactRepositorySerializationError({ reason }))
   );
 
-export const makeArtifactCommands = (repository: ArtifactRepository) => {
+export const makeArtifactCommands = (repository: ArtifactRepository, materials: MaterialRepository) => {
   const list = AgentCli.Command.withExamples([
     { command: "artifacts list", description: "List all saved artifacts" },
-    { command: "artifacts list quiz", description: "List quiz artifacts only" }
+    { command: "artifacts list quiz", description: "List quiz artifacts only" },
+    { command: "artifacts list diagram", description: "List diagram artifacts only" }
   ])(
     AgentCli.Command.withDescription("List saved artifacts")(
       AgentCli.Command.exec("list", {
-        kind: AgentCli.Argument.optionalChoice("kind", ["note", "quiz", "test"] as const).pipe(
+        kind: AgentCli.Argument.optionalChoice("kind", artifactKinds).pipe(
           AgentCli.Argument.withDescription("Optional artifact kind filter")
         )
       }, ({ kind }) =>
@@ -163,18 +219,19 @@ export const makeArtifactCommands = (repository: ArtifactRepository) => {
       description: "Create a quiz artifact"
     }
   ])(
-    AgentCli.Command.withDescription("Create a note, quiz, or test artifact from JSON")(
+    AgentCli.Command.withDescription("Create a note, quiz, test, or diagram artifact from JSON")(
       AgentCli.Command.exec("create", {
         json: AgentCli.Argument.string("json").pipe(
           AgentCli.Argument.withDescription("CreateArtifactInput JSON")
         )
       }, ({ json }) =>
         decodeCreateArtifactInput(json).pipe(
-          Effect.andThen((input) => repository.createArtifact(input)),
+          Effect.flatMap((input) => checkDiagram(input, materials)),
+          Effect.flatMap((input) => repository.createArtifact(input)),
           // A compact confirmation: the model already knows the content it sent,
           // and echoing it back invites repeating it to the student.
           Effect.map(renderCreatedArtifact),
-          Effect.catch((error) => Effect.succeed(renderArtifactError(error)))
+          Effect.catch((error) => Effect.succeed(error._tag === "DiagramRejected" ? error.report : renderArtifactError(error)))
         )
       )
     )
@@ -238,6 +295,6 @@ export const makeArtifactCommands = (repository: ArtifactRepository) => {
   );
 
   return AgentCli.Command.group("artifacts", [list, show, create, submit, attempts, grade] as const).pipe(
-    AgentCli.Command.withDescription("Study artifacts: notes, quizzes, tests, and attempts")
+    AgentCli.Command.withDescription("Study artifacts: notes, quizzes, tests, diagrams, and attempts")
   );
 };

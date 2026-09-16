@@ -36,9 +36,14 @@ export {
   AutoQuestionCorrection,
   CreateArtifactInput,
   CreateArtifactInputByKind,
+  CreateDiagramArtifactInput,
   CreateNoteArtifactInput,
   CreateQuizArtifactInput,
   CreateTestArtifactInput,
+  DiagramArtifact,
+  DiagramEdge,
+  DiagramNode,
+  DiagramType,
   GradedQuizAttempt,
   GradedTestAttempt,
   ListArtifactsInput,
@@ -66,6 +71,7 @@ export {
   UngradedQuizAttempt,
   UngradedTestAttempt,
   artifactKinds,
+  diagramLimits,
   isArtifactKind
 } from "@proxus/shared";
 
@@ -135,6 +141,8 @@ export const makeArtifact = (input: CreateArtifactInput): Artifact => {
     case "quiz":
       return { ...input, id, createdAt };
     case "test":
+      return { ...input, id, createdAt };
+    case "diagram":
       return { ...input, id, createdAt };
   }
 };

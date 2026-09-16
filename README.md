@@ -1,6 +1,6 @@
 # Proxus Product Engineer Challenge
 
-Template de inicio para explorar un caso fullstack + AI inspirado en Proxus: un tutor académico que usa materiales PDF, crea artefactos de estudio y permite resolver quizzes/tests desde una UI web.
+Template de inicio para explorar un caso fullstack + AI inspirado en Proxus: un tutor académico que usa materiales PDF, crea artefactos de estudio (notas, quizzes, tests y esquemas anclados a las páginas) y permite resolver quizzes/tests y explorar esquemas desde una UI web.
 
 El objetivo del repo no es ser una app cerrada, sino una base razonable para que una persona candidata pueda demostrar criterio de producto, arquitectura fullstack y uso pragmático de AI.
 
@@ -92,6 +92,8 @@ pnpm --filter @proxus/server run eval:tutor:tool-calls
 pnpm --filter @proxus/server run eval:tutor:grounding
 pnpm --filter @proxus/server run eval:tutor:sessions
 pnpm --filter @proxus/server run eval:materials
+pnpm --filter @proxus/server run eval:tutor:diagram
+pnpm --filter @proxus/web run check:layout
 
 # CLI del tutor (consume API)
 pnpm --filter @proxus/server run agent:tutor "list my uploaded materials"
@@ -109,6 +111,7 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
    - pide al tutor que te explique unas páginas citándolas: verás qué páginas lee mientras trabaja,
    - pide un quiz sobre esas páginas y ábrelo desde el botón que aparece en el chat,
    - resuélvelo, revisa las correcciones y pregúntale al tutor por una pregunta con el quiz abierto,
+   - pide que te explique las fases del ciclo: el tutor decide dibujar un esquema; ábrelo, toca un concepto, salta a la página que lo explica y pregúntale por él,
    - recarga la página: la conversación se conserva.
 6. Si necesitas más detalle sobre storage local, sigue [`docs/data.md`](./docs/data.md); no subas `.data`.
 7. Las decisiones que explican el diseño actual están en [`docs/decisions.md`](./docs/decisions.md).
@@ -117,6 +120,7 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 ## Limitaciones conocidas
 
 - La guardia de anclaje solo detecta citas explícitas de página ("página 2", "págs. 1-3"); una afirmación inventada sin número de página no se detecta.
+- Los esquemas se validan en estructura y anclaje (ids, aristas, páginas leídas), no en la fidelidad de cada descripción al PDF; el layout propio no minimiza cruces y se limita a 12 conceptos.
 - La corrección de respuesta corta compara texto normalizado, no significado.
 - La ruta de streaming del chat es manual (fuera de Effect HTTP API), como en la base original.
 - Con la cuota gratuita de Gemini, un turno con lectura de páginas consume 3 o 4 peticiones; ante cuota diaria agotada el tutor lo dice y no reintenta.

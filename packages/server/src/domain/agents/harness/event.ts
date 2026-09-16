@@ -44,8 +44,14 @@ export const progressLabelFor = (tool: string, input: unknown): string => {
     return "Consultando tus materiales";
   }
   if (/^artifacts\s+create\b/.test(command)) {
-    const kind = /"kind"\s*:\s*"(note|quiz|test)"/.exec(command)?.[1];
-    return kind === "note" ? "Escribiendo una nota" : kind === "test" ? "Preparando un test" : "Preparando un quiz";
+    const kind = /"kind"\s*:\s*"(note|quiz|test|diagram)"/.exec(command)?.[1];
+    return kind === "note"
+      ? "Escribiendo una nota"
+      : kind === "test"
+        ? "Preparando un test"
+        : kind === "diagram"
+          ? "Dibujando un esquema"
+          : "Preparando un quiz";
   }
   if (/^artifacts\s+(submit|grade)\b/.test(command)) {
     return "Corrigiendo tus respuestas";

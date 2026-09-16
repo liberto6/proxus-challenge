@@ -9,6 +9,7 @@ export type IconName =
   | "quiz"
   | "note"
   | "test"
+  | "diagram"
   | "upload"
   | "trash"
   | "close"
@@ -22,13 +23,17 @@ export type IconName =
   | "chat"
   | "cloud"
   | "spark"
-  | "alert";
+  | "alert"
+  | "plus"
+  | "minus"
+  | "download";
 
 const paths: Record<IconName, string> = {
   pdf: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
   quiz: '<path d="M9 6h11M9 12h11M9 18h11"/><path d="m3 6 1.5 1.5L7 5M3 12l1.5 1.5L7 11M3 18l1.5 1.5L7 17"/>',
   note: '<path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/>',
   test: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
+  diagram: '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/>',
   upload: '<path d="M12 16V4"/><path d="m6 10 6-6 6 6"/><path d="M4 20h16"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
@@ -42,7 +47,10 @@ const paths: Record<IconName, string> = {
   chat: '<path d="M21 12a8 8 0 0 1-8 8H7l-4 3V12a8 8 0 0 1 8-8h2a8 8 0 0 1 8 8z"/>',
   cloud: '<path d="M7 18a4 4 0 0 1-.5-7.97A6 6 0 0 1 18 8a4 4 0 0 1 0 10z"/><path d="m9 13 2 2 4-4"/>',
   spark: '<path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z"/>',
-  alert: '<path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17h.01"/>'
+  alert: '<path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17h.01"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  minus: '<path d="M5 12h14"/>',
+  download: '<path d="M12 4v12"/><path d="m6 10 6 6 6-6"/><path d="M4 20h16"/>'
 };
 
 export function Icon({ name, size = 16, className, strokeWidth = 2 }: {
@@ -84,9 +92,9 @@ export function Mascot({ size = 36, className }: { readonly size?: number; reado
   );
 }
 
-export const kindIcon: Record<ArtifactKind, IconName> = { note: "note", quiz: "quiz", test: "test" };
+export const kindIcon: Record<ArtifactKind, IconName> = { note: "note", quiz: "quiz", test: "test", diagram: "diagram" };
 
-export const kindLabel: Record<ArtifactKind, string> = { note: "Nota", quiz: "Quiz", test: "Test" };
+export const kindLabel: Record<ArtifactKind, string> = { note: "Nota", quiz: "Quiz", test: "Test", diagram: "Esquema" };
 
 /** Caja de color por tipo de artefacto, con su icono dentro. */
 export function KindIcon({ kind, size = 34, className }: { readonly kind: ArtifactKind | "pdf"; readonly size?: number; readonly className?: string }) {

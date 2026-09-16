@@ -45,6 +45,21 @@ export const MaterialsHttpHandlers = HttpApiBuilder.group(
         Effect.orDie
       ))
       .handle("get", ({ params }) => materials.get(params.id).pipe(Effect.orDie))
+      .handle("getPage", ({ params }) => Effect.gen(function* () {
+        const material = yield* materials.get(params.id).pipe(
+          Effect.catchTag("MaterialNotFound", () => new HttpApiError.NotFound()),
+          Effect.catchTag("MaterialRepositoryError", (error) => Effect.die(error))
+        );
+        if (!Number.isInteger(params.page) || params.page < 1 || params.page > material.pageCount) {
+          return yield* new HttpApiError.BadRequest();
+        }
+        const rendered = yield* materials.renderPages(material.id, [params.page]).pipe(Effect.orDie);
+        const image = rendered.pages[0];
+        if (image === undefined) {
+          return yield* new HttpApiError.NotFound();
+        }
+        return { materialId: material.id, page: image.page, pageCount: material.pageCount, mediaType: image.mediaType, data: image.data };
+      }))
       .handle("upload", ({ payload }) => Effect.gen(function* () {
         // The multipart file is buffered to a temporary path by the platform.
         const bytes = yield* fs.readFile(payload.file.path).pipe(Effect.orDie);

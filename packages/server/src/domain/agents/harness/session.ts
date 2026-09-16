@@ -5,7 +5,7 @@ import { newTurnId, timed, traceGrounding, traceModelCall, traceModelError, trac
 import type { AgentHarness, AgentToolkit } from "./harness.ts";
 import { isMaterialPageImages } from "../../materials/material.ts";
 import { AgentMessage, type AgentMessage as AgentMessageType } from "./message.ts";
-import { groundingDisclaimer, groundingReminder, renderedPages, ungroundedCitations } from "./grounding.ts";
+import { RenderedPagesRef, groundingDisclaimer, groundingReminder, renderedPages, ungroundedCitations } from "./grounding.ts";
 
 export interface AgentSessionRunOptions {
   readonly maxSteps?: number;
@@ -93,11 +93,16 @@ function execute(
 
     for (let step = 0; step < maxSteps; step++) {
       const prompt = renderPrompt(harness.systemPrompt, allMessages(), joinNotes(input.systemNote, groundingNote));
+      // Tools run inside generateText; they see the events sink and the pages
+      // rendered before this step (results of this step are appended afterwards).
       const [exit, durationMs] = yield* timed(Effect.exit(LanguageModel.generateText({
         prompt,
         toolkit,
         toolChoice: "auto" as const
-      }).pipe(Effect.provideService(AgentEventSink, sink))));
+      }).pipe(
+        Effect.provideService(AgentEventSink, sink),
+        Effect.provideService(RenderedPagesRef, { pages: renderedPages(allMessages()) })
+      )));
 
       if (exit._tag === "Failure") {
         // The model (or the provider) failed: report it as an error event and stop the

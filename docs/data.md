@@ -50,6 +50,7 @@ Kinds:
 - `note`
 - `quiz`
 - `test`
+- `diagram` (sin intentos; sus nodos citan páginas del material de `source`)
 
 Attempts:
 

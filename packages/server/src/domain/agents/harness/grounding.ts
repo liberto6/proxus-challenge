@@ -1,3 +1,4 @@
+import { Context, Effect, Option } from "effect";
 import { isMaterialPageImages } from "../../materials/material.ts";
 import type { AgentMessage } from "./message.ts";
 
@@ -64,6 +65,24 @@ export const citedPages = (text: string): readonly number[] => {
 
   return [...pages];
 };
+
+/**
+ * Pages rendered so far in the running conversation, for commands that must
+ * only accept content anchored to what was read (diagrams). The session
+ * provides it on every model step; when absent (CLI, evals) commands skip the
+ * check, like progress events are dropped without a sink.
+ */
+export interface RenderedPagesRef {
+  readonly pages: RenderedPages;
+}
+
+export const RenderedPagesRef = Context.Service<RenderedPagesRef>("@proxus/server/agents/harness/RenderedPagesRef");
+
+/** Pages rendered for one material in this conversation, or `undefined` when the session does not track them. */
+export const renderedPagesOf = (materialId: string): Effect.Effect<ReadonlySet<number> | undefined> =>
+  Effect.serviceOption(RenderedPagesRef).pipe(
+    Effect.map((ref) => Option.isSome(ref) ? ref.value.pages.get(materialId) ?? new Set<number>() : undefined)
+  );
 
 /** Cited pages that were not rendered for any material during the conversation. */
 export const ungroundedCitations = (text: string, rendered: RenderedPages): readonly number[] => {

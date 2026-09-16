@@ -11,8 +11,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactQuery, submitArtifactAttemptAction } from "../domain/artifacts/atoms.ts";
-import { materialsQuery } from "../domain/materials/atoms.ts";
+import { materialPageKey, materialPageQuery, materialsQuery } from "../domain/materials/atoms.ts";
 import { formatPages, pluralize } from "../lib/format.ts";
+import { DiagramViewer } from "./DiagramViewer.tsx";
 import { Icon, KindIcon, kindLabel } from "./icons.tsx";
 
 type Answers = Record<string, string>;
@@ -20,8 +21,8 @@ type Answers = Record<string, string>;
 interface ArtifactWorkspaceProps {
   readonly artifactId: string;
   readonly onClose: () => void;
-  /** Sends a question about the open artifact to the tutor chat. */
-  readonly onAskTutor: (text: string) => void;
+  /** Sends a question about the open artifact (and optionally one of its nodes) to the tutor chat. */
+  readonly onAskTutor: (text: string, context?: { readonly nodeId: string }) => void;
 }
 
 export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactWorkspaceProps) {
@@ -44,7 +45,9 @@ export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactW
             <WorkspaceHeader title={value.title} kind={value.kind} onClose={onClose} />
             {value.kind === "note"
               ? <NoteViewer key={value.id} artifact={value} />
-              : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} />}
+              : value.kind === "diagram"
+                ? <DiagramPanel key={value.id} artifact={value} onAskTutor={onAskTutor} />
+                : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} />}
           </>
         )
       })}
@@ -108,6 +111,92 @@ function NoteViewer({ artifact }: { readonly artifact: Extract<Artifact, { reado
           <Streamdown>{artifact.markdown}</Streamdown>
         </div>
       </article>
+    </div>
+  );
+}
+
+function DiagramPanel({ artifact, onAskTutor }: {
+  readonly artifact: Extract<Artifact, { readonly kind: "diagram" }>;
+  readonly onAskTutor: (text: string, context?: { readonly nodeId: string }) => void;
+}) {
+  const materials = useAtomValue(materialsQuery);
+  const [preview, setPreview] = useState<{ readonly page: number; readonly nodeId: string } | undefined>();
+  const materialId = artifact.source?.materialId;
+  // Pages can be previewed while the source material still exists.
+  const materialAvailable = materialId !== undefined
+    && (!AsyncResult.isSuccess(materials) || materials.value.materials.some((material) => material.id === materialId));
+  const openPage = materialAvailable
+    ? (page: number, nodeId: string) => setPreview((current) => current?.page === page && current.nodeId === nodeId ? undefined : { page, nodeId })
+    : undefined;
+  const previewedNode = preview === undefined ? undefined : artifact.nodes.find((node) => node.id === preview.nodeId);
+
+  return (
+    <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-5">
+      <div className="flex flex-wrap items-center gap-2 font-bold text-ink-muted text-sm">
+        <span className="badge badge-lila">{kindLabel.diagram}</span>
+        <ArtifactProvenance artifact={artifact} />
+        <span>· {pluralize(artifact.nodes.length, "concepto", "conceptos")}</span>
+      </div>
+      <p className="font-semibold text-[15px] leading-snug">{artifact.summary}</p>
+      <DiagramViewer
+        artifact={artifact}
+        onAskTutor={(text, nodeId) => onAskTutor(text, { nodeId })}
+        onOpenPage={openPage}
+        openPage={preview?.page}
+      />
+      {preview !== undefined && materialId !== undefined && previewedNode !== undefined && (
+        <PagePreview
+          materialId={materialId}
+          page={preview.page}
+          nodeLabel={previewedNode.label}
+          onClose={() => setPreview(undefined)}
+          onAsk={() => onAskTutor(`¿Qué dice la página ${preview.page} sobre «${previewedNode.label}»?`, { nodeId: previewedNode.id })}
+        />
+      )}
+    </div>
+  );
+}
+
+/** A rendered page of the material, opened from a node's page chip. */
+function PagePreview({ materialId, page, nodeLabel, onClose, onAsk }: {
+  readonly materialId: string;
+  readonly page: number;
+  readonly nodeLabel: string;
+  readonly onClose: () => void;
+  readonly onAsk: () => void;
+}) {
+  const result = useAtomValue(materialPageQuery(materialPageKey(materialId, page)));
+  const refresh = useAtomRefresh(materialPageQuery(materialPageKey(materialId, page)));
+  return (
+    <section className="card flex flex-col gap-2.5 p-4" aria-label={`Página ${page} del material`} aria-live="polite">
+      <div className="flex items-center justify-between gap-2">
+        <h4 className="font-display font-semibold text-base leading-tight">Página {page} · {nodeLabel}</h4>
+        <div className="flex items-center gap-1.5">
+          <button className="btn btn-secondary btn-sm" type="button" onClick={onAsk}><Icon name="spark" size={14} /> Preguntar por esta página</button>
+          <button className="icon-btn text-ink" type="button" onClick={onClose} aria-label="Cerrar la vista previa"><Icon name="close" size={14} strokeWidth={2.4} /></button>
+        </div>
+      </div>
+      {AsyncResult.matchWithError(result, {
+        onInitial: () => <div className="h-48 animate-pulse rounded-sm bg-surface-3" aria-busy="true" />,
+        onError: (cause) => <PreviewError message={String(cause)} onRetry={refresh} />,
+        onDefect: (cause) => <PreviewError message={String(cause)} onRetry={refresh} />,
+        onSuccess: ({ value }) => (
+          <img
+            className="w-full rounded-sm border-2 border-line"
+            src={value.data}
+            alt={`Página ${value.page} de ${value.pageCount} del material`}
+          />
+        )
+      })}
+    </section>
+  );
+}
+
+function PreviewError({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border-2 border-rosa bg-rosa-soft p-3 text-rosa-ink text-sm" role="alert">
+      <span className="font-semibold break-words">No se pudo cargar la página: {message}</span>
+      <button className="btn btn-secondary btn-sm self-start" type="button" onClick={onRetry}>Reintentar</button>
     </div>
   );
 }

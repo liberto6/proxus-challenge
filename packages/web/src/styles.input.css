@@ -267,6 +267,51 @@
     color: var(--color-mint-ink);
   }
 
+  .kind-diagram {
+    background: var(--color-coral-soft);
+    color: var(--color-coral-strong);
+  }
+
+  /* Esquema interactivo: lienzo con trama y controles de vista. */
+  .diagram-stage {
+    height: min(52vh, 420px);
+    min-height: 260px;
+    overflow: hidden;
+    border: 2px solid var(--color-ink);
+    border-radius: var(--radius-md);
+    background-color: var(--color-paper);
+    background-image: radial-gradient(var(--color-line) 1.2px, transparent 1.2px);
+    background-size: 22px 22px;
+    box-shadow: 3px 3px 0 var(--color-ink);
+  }
+
+  .segmented {
+    display: inline-flex;
+    padding: 3px;
+    gap: 2px;
+    border: 2px solid var(--color-ink);
+    border-radius: 9999px;
+    background: var(--color-paper);
+  }
+
+  .segmented > button {
+    padding: 4px 12px;
+    border-radius: 9999px;
+    font-weight: 800;
+    font-size: var(--text-sm);
+    color: var(--color-ink-muted);
+    transition: background-color 120ms ease-out, color 120ms ease-out;
+  }
+
+  .segmented > button:hover {
+    color: var(--color-ink);
+  }
+
+  .segmented > .segmented-on {
+    background: var(--color-sun-soft);
+    color: var(--color-ink);
+  }
+
   .section-mark {
     display: inline-block;
     width: 10px;
