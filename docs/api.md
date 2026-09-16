@@ -19,7 +19,7 @@ POST /api/tutor/chat              # un turno, respuesta completa
 POST /api/tutor/chat/stream       # un turno, eventos NDJSON
 ```
 
-La conversación se guarda en el servidor (`.data/agent-sessions/<id>.json`). Cada turno envía `{ sessionId, input, maxSteps? }`: el servidor carga el historial, ejecuta el turno y persiste sus mensajes al terminar. Un turno que acaba en `error` no persiste nada, así que reintentar no duplica el mensaje del alumno. La web solo recuerda el `sessionId` en `localStorage`.
+La conversación se guarda en el servidor (`.data/agent-sessions/<id>.json`). Cada turno envía `{ sessionId, input, maxSteps?, context? }`, donde `context` indica qué artefacto (y pregunta) tiene abierto el alumno para que el tutor pueda referirse a ello sin preguntar; se inyecta como nota de sistema de ese turno y no se persiste. Cada turno: el servidor carga el historial, ejecuta el turno y persiste sus mensajes al terminar. Un turno que acaba en `error` no persiste nada, así que reintentar no duplica el mensaje del alumno. La web solo recuerda el `sessionId` en `localStorage`.
 
 `/stream` devuelve NDJSON con eventos `AgentEvent` (`packages/shared/src/schemas/agent-event.ts`):
 

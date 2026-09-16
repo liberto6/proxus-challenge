@@ -38,6 +38,11 @@ export const CreateStudyArtifactsSkill = AgentSkill.make({
     "2. Create a compact artifact that directly matches the user's request.",
     "3. Use stable question ids like `q1`, `q2`, `q3`.",
     "4. For quizzes, prefer true-false and multiple-choice because grading is deterministic.",
-    "5. When a user submits answers, save the attempt and then grade it."
+    "5. When a user submits answers, save the attempt and then grade it.",
+    "",
+    "After creating an artifact:",
+    "- The interface shows it in the student's panel, where they solve it. Do not repeat its questions, options or content in the chat.",
+    "- Reply with two or three sentences: what you created (kind, title, number of questions, which material pages it covers) and an invitation to open it from the panel.",
+    "- If the student asks about a question afterwards, refer to it by its number and explain; do not reveal correct answers of an unanswered quiz."
   ].join("\n")
 });

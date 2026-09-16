@@ -69,6 +69,10 @@ artifacts grade <attemptId>
    - `{ type: "done" }`
 6. Si hubo tool results, la web invalida materiales/artifacts.
 
+## Contexto de la interfaz
+
+La web envía en cada turno qué artefacto tiene abierto el alumno (`context.openArtifactId`, y opcionalmente `openQuestionId`). El servicio carga el artefacto y añade una nota de sistema solo para ese turno (`academic-tutor/ui-context.ts`), así "explícame la pregunta 2" se entiende sin nombrar el quiz. Al crear un artefacto, el comando devuelve solo una confirmación compacta (id, tipo, título, número de preguntas) y la skill indica responder con un resumen breve sin repetir el contenido: el alumno lo abre desde el panel, donde el chat ofrece un botón "Abrir".
+
 ## Trazas en servidor
 
 Cada turno del agente emite líneas de log estructuradas (logger de Effect, el mismo que usa la capa HTTP) con la anotación `agent.turn` compartida por todo el turno y `agent.event` con el tipo de evento:

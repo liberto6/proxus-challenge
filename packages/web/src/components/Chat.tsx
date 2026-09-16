@@ -22,7 +22,13 @@ interface TurnError {
   readonly input: string | undefined;
 }
 
-export function Chat() {
+interface ChatProps {
+  /** Artifact open in the workspace, sent to the tutor as context. */
+  readonly selectedArtifactId: string | null;
+  readonly onSelectArtifact: (artifactId: string) => void;
+}
+
+export function Chat({ selectedArtifactId, onSelectArtifact }: ChatProps) {
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [sessionState, setSessionState] = useState<"loading" | "ready" | "failed">("loading");
   const [messages, setMessages] = useState<readonly AgentMessage[]>([]);
@@ -86,7 +92,8 @@ export function Chat() {
     let turnFailed: TurnError | undefined;
 
     try {
-      for await (const event of streamTutorMessage({ sessionId, input: trimmed, maxSteps: 8 }, controller.signal)) {
+      const context = selectedArtifactId === null ? undefined : { openArtifactId: selectedArtifactId };
+      for await (const event of streamTutorMessage({ sessionId, input: trimmed, maxSteps: 8, ...(context === undefined ? {} : { context }) }, controller.signal)) {
         switch (event.type) {
           case "message": {
             const message = event.message;
@@ -184,7 +191,7 @@ export function Chat() {
               </div>
             )
           : groupMessages(messages).map((group, index) => group.kind === "activity"
-              ? <ActivityGroup key={index} messages={group.messages} />
+              ? <ActivityGroup key={index} messages={group.messages} onSelectArtifact={onSelectArtifact} />
               : <MessageBubble key={index} message={group.message} />)}
 
         {isSending && <ProgressStatus label={progress.at(-1)} />}
@@ -301,12 +308,45 @@ function groupMessages(messages: readonly AgentMessage[]): readonly MessageGroup
   return groups;
 }
 
-function ActivityGroup({ messages }: { readonly messages: readonly AgentMessage[] }) {
+/** Artifacts created during a turn, taken from `artifacts create` results. */
+const createdArtifacts = (messages: readonly AgentMessage[]): ReadonlyArray<{ id: string; kind: string; title: string }> =>
+  messages.flatMap((message) => {
+    if (message.role !== "tool-result" || message.isFailure) return [];
+    const result = typeof message.result === "string" ? safeJson(message.result) : message.result;
+    const typed = result as { created?: unknown; id?: unknown; kind?: unknown; title?: unknown } | undefined;
+    return typed?.created === true && typeof typed.id === "string" && typeof typed.kind === "string" && typeof typed.title === "string"
+      ? [{ id: typed.id, kind: typed.kind, title: typed.title }]
+      : [];
+  });
+
+const safeJson = (text: string): unknown => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};
+
+const kindLabel: Record<string, string> = { note: "la nota", quiz: "el quiz", test: "el test" };
+
+function ActivityGroup({ messages, onSelectArtifact }: { readonly messages: readonly AgentMessage[]; readonly onSelectArtifact: (artifactId: string) => void }) {
   const steps = messages.filter((message) => message.role === "tool-call");
   const failed = messages.some((message) => message.role === "tool-result" && message.isFailure);
   const summary = steps.map(describeToolMessage).join(" · ");
+  const created = createdArtifacts(messages);
   return (
-    <details className={`w-full max-w-3xl self-start rounded-xl border px-3 py-2 text-sm ${failed ? "border-amber-900 text-amber-200" : "border-slate-800 text-slate-500"}`}>
+    <div className="flex w-full max-w-3xl flex-col gap-2 self-start">
+    {created.map((artifact) => (
+      <button
+        key={artifact.id}
+        className="self-start rounded-full border border-sky-500 bg-sky-950/40 px-4 py-2 text-sky-100 text-sm hover:bg-sky-900/60"
+        type="button"
+        onClick={() => onSelectArtifact(artifact.id)}
+      >
+        Abrir {kindLabel[artifact.kind] ?? artifact.kind}: {artifact.title}
+      </button>
+    ))}
+    <details className={`w-full rounded-xl border px-3 py-2 text-sm ${failed ? "border-amber-900 text-amber-200" : "border-slate-800 text-slate-500"}`}>
       <summary className="cursor-pointer">
         {steps.length} {steps.length === 1 ? "paso" : "pasos"} del tutor: {summary}
       </summary>
@@ -322,6 +362,7 @@ function ActivityGroup({ messages }: { readonly messages: readonly AgentMessage[
         ))}
       </ol>
     </details>
+    </div>
   );
 }
 

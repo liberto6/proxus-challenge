@@ -17,7 +17,7 @@ export function App() {
     >
       <Sidebar selectedArtifactId={selectedArtifactId} onSelectArtifact={setSelectedArtifactId} />
       {selectedArtifactId !== null && <ArtifactWorkspace artifactId={selectedArtifactId} />}
-      <Chat />
+      <Chat selectedArtifactId={selectedArtifactId} onSelectArtifact={setSelectedArtifactId} />
     </div>
   );
 }

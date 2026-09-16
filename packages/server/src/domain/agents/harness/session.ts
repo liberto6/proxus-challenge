@@ -14,6 +14,8 @@ export interface AgentSessionRunOptions {
 export interface AgentSessionRunInput extends AgentSessionRunOptions {
   readonly input: string;
   readonly messages?: readonly AgentMessageType[];
+  /** Extra system note for this turn only (e.g. what the user has open in the UI). Not persisted. */
+  readonly systemNote?: string;
 }
 
 export interface AgentSessionRunResult {
@@ -90,7 +92,7 @@ function execute(
     yield* traceTurnStarted({ inputLength: input.input.length, historyLength: previousMessages.length, maxSteps });
 
     for (let step = 0; step < maxSteps; step++) {
-      const prompt = renderPrompt(harness.systemPrompt, allMessages(), groundingNote);
+      const prompt = renderPrompt(harness.systemPrompt, allMessages(), joinNotes(input.systemNote, groundingNote));
       const [exit, durationMs] = yield* timed(Effect.exit(LanguageModel.generateText({
         prompt,
         toolkit,
@@ -181,6 +183,11 @@ function execute(
     };
   }));
 }
+
+const joinNotes = (...notes: ReadonlyArray<string | undefined>): string | undefined => {
+  const present = notes.filter((note): note is string => note !== undefined && note.trim().length > 0);
+  return present.length === 0 ? undefined : present.join("\n\n");
+};
 
 const isMaterialsCommand = (message: AgentMessageType, subcommand: "list" | "view"): boolean => {
   if (message.role !== "tool-call" || message.name !== "cli") {

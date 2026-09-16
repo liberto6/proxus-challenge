@@ -5,6 +5,7 @@ import { ArtifactRepository } from "../../artifacts/artifact.ts";
 import { MaterialRepository } from "../../materials/material.ts";
 import { AgentSession, SessionNotFound, SessionRepository, type AgentMessage } from "../harness/index.ts";
 import { makeAcademicTutorHarness } from "../academic-tutor.ts";
+import { describeUiContext } from "./ui-context.ts";
 
 /**
  * Runs tutor turns against a persisted session.
@@ -42,13 +43,25 @@ export const TutorChatServiceLive = Layer.effect(
     // A turn completed when its last message is the tutor's answer.
     const turnCompleted = (messages: readonly AgentMessage[]) => messages.at(-1)?.role === "assistant";
 
+    // What the student has open, as a one-turn system note. An unknown artifact
+    // id is ignored rather than failing the turn.
+    const uiContextNote = (input: TutorChatRequest): Effect.Effect<string | undefined> =>
+      input.context?.openArtifactId === undefined
+        ? Effect.succeed(undefined)
+        : artifactRepository.getArtifact(input.context.openArtifactId).pipe(
+            Effect.map((artifact) => describeUiContext(artifact, input.context?.openQuestionId)),
+            Effect.catch(() => Effect.succeed(undefined))
+          );
+
     return {
       sendMessage: (input) => Effect.gen(function* () {
         const stored = yield* sessions.getSession(input.sessionId);
+        const systemNote = yield* uiContextNote(input);
         const result = yield* session.run({
           input: input.input,
           messages: stored.messages,
-          maxSteps: input.maxSteps ?? 8
+          maxSteps: input.maxSteps ?? 8,
+          ...(systemNote === undefined ? {} : { systemNote })
         }).pipe(Effect.provide(harness.layer));
 
         if (turnCompleted(result.newMessages)) {
@@ -60,6 +73,7 @@ export const TutorChatServiceLive = Layer.effect(
 
       streamMessage: (input) => Stream.unwrap(Effect.gen(function* () {
         const stored = yield* sessions.getSession(input.sessionId);
+        const systemNote = yield* uiContextNote(input);
         const turnMessages: AgentMessage[] = [];
         let failed = false;
 
@@ -73,7 +87,8 @@ export const TutorChatServiceLive = Layer.effect(
         return session.stream({
           input: input.input,
           messages: stored.messages,
-          maxSteps: input.maxSteps ?? 8
+          maxSteps: input.maxSteps ?? 8,
+          ...(systemNote === undefined ? {} : { systemNote })
         }).pipe(
           Stream.tap((event) => Effect.sync(() => {
             if (event.type === "message") {

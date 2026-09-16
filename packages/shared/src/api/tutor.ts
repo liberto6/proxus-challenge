@@ -7,10 +7,18 @@ import { AgentSession, AgentSessionListResponse } from "../schemas/agent-session
  * One tutor turn. The conversation lives on the server: the client sends the
  * session id and the new input only, never the history.
  */
+/** What the student has open in the interface while asking, so the tutor can refer to it. */
+export const TutorUiContext = Schema.Struct({
+  openArtifactId: Schema.optional(Schema.String),
+  openQuestionId: Schema.optional(Schema.String)
+});
+export type TutorUiContext = typeof TutorUiContext.Type;
+
 export const TutorChatRequest = Schema.Struct({
   sessionId: Schema.String,
   input: Schema.String,
-  maxSteps: Schema.optional(Schema.Number)
+  maxSteps: Schema.optional(Schema.Number),
+  context: Schema.optional(TutorUiContext)
 });
 export type TutorChatRequest = typeof TutorChatRequest.Type;
 

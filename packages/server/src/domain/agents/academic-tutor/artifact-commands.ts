@@ -19,6 +19,14 @@ const UnknownFromJson = Schema.fromJsonString(Schema.Unknown);
 const SubmitAttemptInputFromJson = Schema.fromJsonString(SubmitAttemptInput);
 
 const renderArtifact = (artifact: Artifact) => JSON.stringify(artifact, null, 2);
+const renderCreatedArtifact = (artifact: Artifact) => JSON.stringify({
+  created: true,
+  id: artifact.id,
+  kind: artifact.kind,
+  title: artifact.title,
+  ...(artifact.kind === "note" ? {} : { questionCount: artifact.questions.length }),
+  note: "The student can open it from the panel. Do not repeat its content in the chat."
+}, null, 2);
 const renderAttempt = (attempt: ArtifactAttempt) => JSON.stringify(attempt, null, 2);
 
 const renderArtifactError = (error: ArtifactNotFound | AttemptNotFound | ArtifactTypeMismatch | QuestionNotFound | AnswerTypeMismatch | ArtifactRepositoryStorageError | ArtifactRepositorySerializationError) => {
@@ -163,7 +171,9 @@ export const makeArtifactCommands = (repository: ArtifactRepository) => {
       }, ({ json }) =>
         decodeCreateArtifactInput(json).pipe(
           Effect.andThen((input) => repository.createArtifact(input)),
-          Effect.map(renderArtifact),
+          // A compact confirmation: the model already knows the content it sent,
+          // and echoing it back invites repeating it to the student.
+          Effect.map(renderCreatedArtifact),
           Effect.catch((error) => Effect.succeed(renderArtifactError(error)))
         )
       )

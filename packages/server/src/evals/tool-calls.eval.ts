@@ -7,6 +7,7 @@ import { AcademicTutorSkills } from "../domain/agents/academic-tutor/skills/inde
 import { MaterialNotFound, MaterialRepository, type PdfMaterial } from "../domain/materials/material.ts";
 import { classifyFailure, promptContents, requestBody, skipThoughtSignature, toResponseParts } from "../infra/agents/gemini-language-model.ts";
 import { describeModelFailure } from "../domain/agents/harness/session.ts";
+import { describeUiContext } from "../domain/agents/academic-tutor/ui-context.ts";
 
 /**
  * Deterministic eval (no API calls): the tool-call protocol between the harness
@@ -249,6 +250,49 @@ const geminiResponseCase = Effect.sync(() => {
   ];
 });
 
+// --- Case 3b: UI context reaches the model as a one-turn system note ------------
+
+const uiContextCase = Effect.gen(function* () {
+  const quiz = {
+    id: "quiz-1",
+    kind: "quiz" as const,
+    title: "Quiz del ciclo del agua",
+    questions: [
+      { type: "true-false" as const, id: "q1", prompt: "El agua se evapora con el sol.", correctAnswer: true, explanation: "Sí." },
+      { type: "true-false" as const, id: "q2", prompt: "La condensación forma nubes.", correctAnswer: true, explanation: "Sí." }
+    ]
+  };
+  const note = describeUiContext(quiz, "q2");
+
+  const received = yield* Ref.make<readonly LanguageModel.ProviderOptions[]>([]);
+  const materialRepository = yield* MaterialRepository;
+  const harness = makeHarness(materialRepository);
+  const textOnlyModel = Layer.effect(
+    LanguageModel.LanguageModel,
+    LanguageModel.make({
+      generateText: (options) => Ref.update(received, (all) => [...all, options]).pipe(
+        Effect.as([Response.makePart("text", { text: "La pregunta 2 trata de la condensación." })])
+      ),
+      streamText: () => { throw new Error("not used"); }
+    })
+  );
+  yield* AgentSession.make(harness).run({ input: "Explícame la pregunta 2", systemNote: note, maxSteps: 2 }).pipe(
+    Effect.provide(Layer.mergeAll(harness.layer, textOnlyModel))
+  );
+  const prompt = (yield* Ref.get(received))[0];
+  const systemText = (prompt?.prompt.content ?? [])
+    .filter((message) => message.role === "system")
+    .map((message) => typeof message.content === "string" ? message.content : "")
+    .join("\n");
+  const persisted = (prompt?.prompt.content ?? []).some((message) => message.role !== "system" && JSON.stringify(message).includes("UI CONTEXT"));
+
+  return [
+    criterion("ui-context-names-artifact-and-question", note.includes("Quiz del ciclo del agua") && note.includes("Focused question q2") && note.includes("condensación"), note.split("\n")[1] ?? ""),
+    criterion("ui-context-injected-as-system-note", systemText.includes("UI CONTEXT") && systemText.includes("quiz-1"), "system prompt carries the UI context"),
+    criterion("ui-context-not-in-history", !persisted, "the note is not a persisted message")
+  ];
+});
+
 // --- Case 4: provider failures are classified and explained --------------------
 
 const providerFailureCase = Effect.sync(() => {
@@ -284,6 +328,7 @@ export const toolCallsEval = Effect.gen(function* () {
     ...(yield* harnessHistoryCase.pipe(Effect.provide(FixtureMaterialRepository))),
     ...(yield* streamEventsCase.pipe(Effect.provide(FixtureMaterialRepository))),
     ...(yield* geminiResponseCase),
+    ...(yield* uiContextCase.pipe(Effect.provide(FixtureMaterialRepository))),
     ...(yield* providerFailureCase)
   ];
 
