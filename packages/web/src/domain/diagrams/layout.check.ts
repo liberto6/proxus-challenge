@@ -260,6 +260,13 @@ results.push(
   criterion("timeline.deterministic", JSON.stringify(layoutDiagram(timelineArtifact)) === JSON.stringify(timelineLayout), "same output twice")
 );
 
+const groupedMermaid = toMermaid(grouped);
+const timelineMermaid = toMermaid(timelineArtifact);
+results.push(
+  criterion("mermaid-export-groups", (groupedMermaid.match(/subgraph /g) ?? []).length === 2 && groupedMermaid.includes('subgraph destinos ["Destinos del agua"]') && groupedMermaid.split("recoleccion[").length === 2, `${(groupedMermaid.match(/subgraph /g) ?? []).length} subgraphs`),
+  criterion("mermaid-export-phases", timelineMermaid.startsWith("flowchart LR") && (timelineMermaid.match(/subgraph phase_/g) ?? []).length === 3 && timelineMermaid.includes("e1 --> e2") === false && timelineMermaid.includes('e1 -- "cambia porque" --> e2'), "phases as subgraphs, transitions labelled")
+);
+
 const mermaid = toMermaid(cycle);
 results.push(
   criterion("mermaid-export-counts", mermaid.startsWith("flowchart TD") && (mermaid.match(/-->/g) ?? []).length === 6 && mermaidEdgeCount(cycle) === 6 && mermaid.includes("recoleccion --> evaporacion") && mermaid.includes('-- "aporta vapor" -->'), `${(mermaid.match(/-->/g) ?? []).length} arrows`)

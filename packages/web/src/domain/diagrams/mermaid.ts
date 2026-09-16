@@ -7,11 +7,34 @@ import { splitTransitions } from "./layout.ts";
  * by the model.
  */
 export const toMermaid = (artifact: DiagramArtifact): string => {
-  const lines = ["flowchart TD"];
+  const lines = [artifact.diagramType === "timeline" ? "flowchart LR" : "flowchart TD"];
   const quote = (text: string) => `"${text.replaceAll("\"", "'")}"`;
+  const declare = (node: DiagramArtifact["nodes"][number]) => {
+    const text = node.sublabel === undefined ? node.label : `${node.label}<br/><i>${node.sublabel}</i>`;
+    const kind = node.kind ?? "concept";
+    // Shapes close to the drawing: agents as stadiums, conditions as hexagons, formulas as subroutines.
+    return kind === "agent" ? `${node.id}([${quote(text)}])`
+      : kind === "condition" ? `${node.id}{{${quote(text)}}}`
+        : kind === "formula" ? `${node.id}[[${quote(node.formula ?? text)}]]`
+          : `${node.id}[${quote(text)}]`;
+  };
 
+  // Phases (timeline) and groups become subgraphs; the rest are declared loose.
+  const declared = new Set<string>();
+  const subgraph = (id: string, label: string, ids: readonly string[]) => {
+    const members = artifact.nodes.filter((node) => ids.includes(node.id) && !declared.has(node.id));
+    if (members.length === 0) return;
+    lines.push(`  subgraph ${id} [${quote(label)}]`);
+    for (const node of members) {
+      lines.push(`    ${declare(node)}`);
+      declared.add(node.id);
+    }
+    lines.push("  end");
+  };
+  (artifact.phases ?? []).forEach((phase, index) => subgraph(`phase_${index + 1}`, phase, artifact.nodes.filter((node) => node.phase === phase).map((node) => node.id)));
+  for (const group of artifact.groups ?? []) subgraph(group.id, group.label, group.nodeIds);
   for (const node of artifact.nodes) {
-    lines.push(`  ${node.id}[${quote(node.label)}]`);
+    if (!declared.has(node.id)) lines.push(`  ${declare(node)}`);
   }
 
   const path = artifact.mainPath ?? [];
