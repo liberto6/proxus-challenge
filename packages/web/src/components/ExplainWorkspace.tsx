@@ -12,7 +12,9 @@ import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { artifactAttemptsQuery, dictationSamplesQuery, submitArtifactAttemptAction } from "../domain/artifacts/atoms.ts";
 import { countWords, segmentTranscript } from "../domain/explain/highlight.ts";
+import { configuredDictationSource, speechRecognitionSupported, type Dictation } from "../domain/explain/dictation.ts";
 import { useSimulatedDictation } from "../domain/explain/simulated-dictation.ts";
+import { useSpeechDictation } from "../domain/explain/speech-dictation.ts";
 import { formatPages, pluralize } from "../lib/format.ts";
 import type { AskTutorContext } from "./ArtifactWorkspace.tsx";
 import { Icon, kindLabel } from "./icons.tsx";
@@ -37,6 +39,18 @@ const statusMark: Record<KeyPointStatus, string> = { covered: "mark-covered", pa
 const isGradedExplain = (attempt: ArtifactAttempt): attempt is GradedExplainAttempt =>
   attempt.artifactKind === "explain" && attempt.status === "graded";
 
+/**
+ * Both sources are always mounted (hooks cannot be conditional); the panel
+ * talks to the configured one. `browser` needs a browser that recognises
+ * speech; otherwise the microphone explains why and the textarea remains.
+ */
+const useDictation = (onTranscript: (transcript: string) => void): { readonly source: "browser" | "simulated"; readonly dictation: Dictation } => {
+  const simulated = useSimulatedDictation(onTranscript);
+  const speech = useSpeechDictation(onTranscript);
+  const source = configuredDictationSource();
+  return { source, dictation: source === "browser" ? speech : simulated };
+};
+
 export function ExplainWorkspace({ artifact, onAskTutor, tutoring }: {
   readonly artifact: ExplainArtifactView;
   readonly onAskTutor: (text: string, context?: AskTutorContext) => void;
@@ -53,7 +67,9 @@ export function ExplainWorkspace({ artifact, onAskTutor, tutoring }: {
   const samples = useAtomValue(dictationSamplesQuery(artifact.id));
   const attempts = useAtomValue(artifactAttemptsQuery(artifact.id));
   const scroller = useRef<HTMLDivElement>(null);
-  const dictation = useSimulatedDictation(setTranscript);
+  const { source, dictation } = useDictation(setTranscript);
+  const simulated = source === "simulated";
+  const micAvailable = simulated || speechRecognitionSupported();
 
   const materialId = artifact.source?.materialId;
   const materialAvailable = useMaterialAvailable(materialId);
@@ -80,10 +96,15 @@ export function ExplainWorkspace({ artifact, onAskTutor, tutoring }: {
       dictation.stop();
       return;
     }
+    setError(undefined);
+    if (!simulated) {
+      setInputMode("voice");
+      dictation.start();
+      return;
+    }
     const sample = AsyncResult.isSuccess(samples) ? samples.value.samples.find((item) => item.quality === quality) : undefined;
     if (sample === undefined) return;
     setInputMode("voice");
-    setError(undefined);
     dictation.start(sample.transcript);
   };
 
@@ -206,11 +227,11 @@ export function ExplainWorkspace({ artifact, onAskTutor, tutoring }: {
             {recording && (
               <span className="flex items-center gap-2 font-bold text-rosa-ink text-sm" aria-live="polite">
                 <span className="wave" aria-hidden="true"><i /><i /><i /><i /><i /></span>
-                Grabando · {formatSeconds(dictation.seconds)}
+                {simulated ? "Grabando" : "Escuchando"} · {formatSeconds(dictation.seconds)}
               </span>
             )}
             {!recording && dictation.status === "stopped" && attempt === null && (
-              <span className="font-semibold text-ink-subtle text-xs">Dictado simulado · {formatSeconds(dictation.seconds)} · puedes corregir el texto</span>
+              <span className="font-semibold text-ink-subtle text-xs">{simulated ? "Dictado simulado" : "Dictado"} · {formatSeconds(dictation.seconds)} · puedes corregir el texto</span>
             )}
           </div>
 
@@ -247,9 +268,16 @@ export function ExplainWorkspace({ artifact, onAskTutor, tutoring }: {
                 </p>
               )}
 
+          {attempt === null && dictation.status === "failed" && dictation.reason !== undefined && (
+            <p className="rounded-md border-2 border-rosa bg-rosa-soft p-2.5 font-semibold text-rosa-ink text-sm" role="alert">{dictation.reason}</p>
+          )}
           {attempt === null && (
             <p className="font-semibold text-ink-subtle text-xs">
-              Prototipo: el micro dicta un texto de muestra en lugar de reconocer tu voz. Elige la calidad de la muestra para ver cómo corrige.
+              {simulated
+                ? "Prototipo: el micro dicta un texto de muestra en lugar de reconocer tu voz. Elige la calidad de la muestra para ver cómo corrige."
+                : micAvailable
+                  ? "El reconocimiento de voz lo hace tu navegador (en Chrome y Edge, el audio pasa por el servicio de Google). No se guarda ningún audio, solo el texto."
+                  : "Este navegador no reconoce voz (Chrome, Edge o Safari sí). Escribe tu explicación."}
             </p>
           )}
         </section>
@@ -267,29 +295,32 @@ export function ExplainWorkspace({ artifact, onAskTutor, tutoring }: {
                   <span className="font-bold text-ink-muted text-sm">
                     {words === 0 ? "Sin explicación todavía" : transcript.trim().length < minTranscriptLength ? "Un poco más…" : pluralize(words, "palabra", "palabras")}
                   </span>
-                  <div className="segmented" role="radiogroup" aria-label="Calidad de la muestra dictada">
-                    {(["good", "partial", "weak"] as const).map((item) => (
-                      <button
-                        key={item}
-                        type="button"
-                        role="radio"
-                        aria-checked={quality === item}
-                        className={quality === item ? "segmented-on" : ""}
-                        disabled={recording}
-                        onClick={() => setQuality(item)}
-                      >
-                        {qualityLabel[item]}
-                      </button>
-                    ))}
-                  </div>
+                  {simulated && (
+                    <div className="segmented" role="radiogroup" aria-label="Calidad de la muestra dictada">
+                      {(["good", "partial", "weak"] as const).map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          role="radio"
+                          aria-checked={quality === item}
+                          className={quality === item ? "segmented-on" : ""}
+                          disabled={recording}
+                          onClick={() => setQuality(item)}
+                        >
+                          {qualityLabel[item]}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 max-sm:w-full">
                   <button
                     className={`btn ${recording ? "btn-danger" : "btn-secondary"} max-sm:flex-1`}
                     type="button"
-                    disabled={isSubmitting || (!recording && !AsyncResult.isSuccess(samples))}
+                    disabled={isSubmitting || !micAvailable || (simulated && !recording && !AsyncResult.isSuccess(samples))}
                     onClick={record}
                     aria-pressed={recording}
+                    title={micAvailable ? undefined : "Este navegador no reconoce voz"}
                   >
                     <Icon name={recording ? "stop" : "mic"} size={16} /> {recording ? "Parar" : "Grabar"}
                   </button>

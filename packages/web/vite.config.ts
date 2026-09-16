@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -6,6 +7,8 @@ const port = Number(process.env.WEB_PORT ?? process.env.PORT ?? "5173");
 
 export default defineConfig({
   root: "src",
+  // `VITE_*` variables are read from the repo's root `.env`, the one the server uses too.
+  envDir: fileURLToPath(new URL("../../", import.meta.url)),
   plugins: [react()],
   server: {
     host: "0.0.0.0",

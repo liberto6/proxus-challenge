@@ -1,29 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { Dictation, DictationStatus } from "./dictation.ts";
 
 /**
  * Simulated dictation for the prototype: "records" by revealing a given text
- * word by word at speaking pace, with a running clock. It has the shape a
- * hook over `SpeechRecognition` (or a transcription service) would have, so
- * the explanation panel does not change when real speech-to-text lands:
- * `start` opens a recording, `stop` closes it, `transcript` grows while it runs.
+ * word by word at speaking pace, with a running clock. Same shape as the
+ * browser's speech recognition (`speech-dictation.ts`), so the explanation
+ * panel does not care which one it is talking to.
  */
-
-export type DictationStatus = "idle" | "recording" | "stopped";
-
-export interface SimulatedDictation {
-  readonly status: DictationStatus;
-  /** Seconds since the recording started; frozen when it stops. */
-  readonly seconds: number;
-  /** Starts dictating `text`; the transcript is emitted through `onTranscript` as it grows. */
-  readonly start: (text: string) => void;
-  readonly stop: () => void;
-}
 
 /** Roughly 170 words per minute, with a pause after punctuation. */
 const wordDelayMs = 350;
 const pauseDelayMs = 420;
 
-export const useSimulatedDictation = (onTranscript: (transcript: string) => void): SimulatedDictation => {
+export const useSimulatedDictation = (onTranscript: (transcript: string) => void): Dictation => {
   const [status, setStatus] = useState<DictationStatus>("idle");
   const [seconds, setSeconds] = useState(0);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -43,9 +32,9 @@ export const useSimulatedDictation = (onTranscript: (transcript: string) => void
     setStatus((current) => current === "recording" ? "stopped" : current);
   }, [clear]);
 
-  const start = useCallback((text: string) => {
+  const start = useCallback((text?: string) => {
     clear();
-    const words = text.split(/\s+/).filter((word) => word.length > 0);
+    const words = (text ?? "").split(/\s+/).filter((word) => word.length > 0);
     setSeconds(0);
     setStatus("recording");
     emit.current("");
