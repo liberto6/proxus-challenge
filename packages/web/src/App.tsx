@@ -2,11 +2,12 @@ import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { folderOf, generalFolderId, type AgentSession } from "@proxus/shared";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { ArtifactWorkspace, type AskTutorContext } from "./components/ArtifactWorkspace.tsx";
+import { ArtifactWorkspace, type AskTutorContext, type TutoringOffer } from "./components/ArtifactWorkspace.tsx";
 import { Chat, type ChatPrefill, type ChatSession } from "./components/Chat.tsx";
 import { FolderSwitcher } from "./components/FolderSwitcher.tsx";
 import { Icon } from "./components/icons.tsx";
-import { Brand, MaterialsSection, PracticeList, SessionsSection, Sidebar, type FolderContext } from "./components/Sidebar.tsx";
+import { Brand, MaterialsSection, PracticeList, SessionsSection, Sidebar, TutoringSection, type FolderContext } from "./components/Sidebar.tsx";
+import { TutoringPanel } from "./components/TutoringPanel.tsx";
 import { artifactsQuery } from "./domain/artifacts/atoms.ts";
 import { foldersQuery, sessionsQuery } from "./domain/folders/atoms.ts";
 import { rememberCurrent, rememberedFolderId, rememberedSessionId } from "./domain/folders/current.ts";
@@ -132,8 +133,12 @@ const useFolderSession = () => {
  * Below 1280 px the panel slides over the chat; below 768 px everything is one
  * column with tabs.
  */
+/** What the right panel shows: an artifact, or the tutoring of the folder's subject. */
+type Panel = { readonly kind: "artifact"; readonly id: string } | { readonly kind: "tutoring"; readonly topic?: string | undefined };
+
 export function App() {
-  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const selectedArtifactId = panel?.kind === "artifact" ? panel.id : null;
   const [mobileTab, setMobileTab] = useState<"chat" | "practice">("chat");
   const [materialsOpen, setMaterialsOpen] = useState(false);
   const [prefill, setPrefill] = useState<ChatPrefill | undefined>();
@@ -142,26 +147,43 @@ export function App() {
   const uploader = useMaterialUpload(folder.folderId);
   const materials = useAtomValue(materialsQuery);
   const artifacts = useAtomValue(artifactsQuery);
+  const folders = useAtomValue(foldersQuery);
+  const subject = AsyncResult.isSuccess(folders) ? folders.value.folders.find((item) => item.id === folder.folderId)?.subject : undefined;
+  const folderPractice = AsyncResult.isSuccess(artifacts) ? artifacts.value.artifacts.filter((artifact) => folderOf(artifact) === folder.folderId) : [];
   // While the list loads, assume there are materials so the onboarding does not flash.
   const hasMaterials = !AsyncResult.isSuccess(materials) || materials.value.materials.some((material) => folderOf(material) === folder.folderId);
   const artifactCount = AsyncResult.isSuccess(artifacts) ? artifacts.value.artifacts.filter((artifact) => folderOf(artifact) === folder.folderId).length : 0;
 
   // Leaving the conversation (new one, another folder) closes whatever was open.
   useEffect(() => {
-    setSelectedArtifactId(null);
+    setPanel(null);
   }, [chatSession.session?.id]);
 
   const openArtifact = (id: string) => {
-    setSelectedArtifactId(id);
+    setPanel({ kind: "artifact", id });
     setMobileTab("practice");
     setMaterialsOpen(false);
   };
-  const closeArtifact = () => setSelectedArtifactId(null);
+  const openTutoring = (topic?: string) => {
+    setPanel({ kind: "tutoring", topic });
+    setMobileTab("practice");
+    setMaterialsOpen(false);
+  };
+  const closePanel = () => setPanel(null);
   const askTutor = (text: string, context?: AskTutorContext) => {
     setPrefill({ text, nonce: Date.now(), ...context });
     if (layout === "mobile") setMobileTab("chat");
-    if (layout === "compact") setSelectedArtifactId(null);
+    if (layout === "compact") setPanel(null);
   };
+  // Offered under a failed attempt only when the folder names its subject.
+  const tutoring: TutoringOffer | undefined = subject === undefined ? undefined : { subjectName: subject.name, open: openTutoring };
+  const panelView = panel === null
+    ? null
+    : panel.kind === "artifact"
+      ? <ArtifactWorkspace artifactId={panel.id} onClose={closePanel} onAskTutor={askTutor} tutoring={tutoring} />
+      : subject === undefined
+        ? null
+        : <TutoringPanel folderId={folder.folderId} subject={subject} topic={panel.topic} practice={folderPractice} onClose={closePanel} onAskTutor={(text) => askTutor(text)} />;
   // On phones the picker lives in the materials sheet, so open the sheet instead
   // of clicking an input that is about to unmount.
   const requestUpload = () => {
@@ -170,13 +192,13 @@ export function App() {
   };
 
   useEffect(() => {
-    if (selectedArtifactId === null) return;
+    if (panel === null) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeArtifact();
+      if (event.key === "Escape") closePanel();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectedArtifactId]);
+  }, [panel]);
 
   if (layout === "mobile") {
     return (
@@ -188,6 +210,7 @@ export function App() {
                   <FolderSwitcher folderId={folder.folderId} onSelect={folder.onSelectFolder} onDeleted={folder.onFolderDeleted} />
                   <MaterialsSection folderId={folder.folderId} uploader={uploader} />
                   <SessionsSection folder={folder} />
+                  <TutoringSection folderId={folder.folderId} subject={subject} open={false} onOpen={() => openTutoring()} />
                 </div>
               </Sheet>
             )
@@ -200,6 +223,7 @@ export function App() {
                   hasMaterials={hasMaterials}
                   onRequestUpload={requestUpload}
                   prefill={prefill}
+                  tutoring={subject === undefined ? undefined : { subjectName: subject.name, onOpen: () => openTutoring() }}
                   mobile
                   headerExtra={
                     <button className="btn btn-secondary btn-sm" type="button" onClick={() => setMaterialsOpen(true)}>
@@ -208,8 +232,8 @@ export function App() {
                   }
                 />
               )
-            : selectedArtifactId !== null
-              ? <ArtifactWorkspace artifactId={selectedArtifactId} onClose={closeArtifact} onAskTutor={askTutor} />
+            : panelView !== null
+              ? panelView
               : (
                   <Sheet title="Práctica">
                     <PracticeList folderId={folder.folderId} selectedArtifactId={selectedArtifactId} onSelectArtifact={openArtifact} />
@@ -231,7 +255,7 @@ export function App() {
   }
 
   const wide = layout === "wide";
-  const showPanelColumn = wide && selectedArtifactId !== null;
+  const showPanelColumn = wide && panelView !== null;
 
   return (
     <div
@@ -242,7 +266,7 @@ export function App() {
           : `${wide ? 280 : 240}px minmax(0, 1fr)`
       }}
     >
-      <Sidebar folder={folder} uploader={uploader} selectedArtifactId={selectedArtifactId} onSelectArtifact={openArtifact} />
+      <Sidebar folder={folder} uploader={uploader} selectedArtifactId={selectedArtifactId} onSelectArtifact={openArtifact} subject={subject} tutoringOpen={panel?.kind === "tutoring"} onOpenTutoring={() => openTutoring()} />
       <Chat
         chatSession={chatSession}
         selectedArtifactId={selectedArtifactId}
@@ -250,16 +274,17 @@ export function App() {
         hasMaterials={hasMaterials}
         onRequestUpload={requestUpload}
         prefill={prefill}
+        tutoring={subject === undefined ? undefined : { subjectName: subject.name, onOpen: () => openTutoring() }}
       />
       {showPanelColumn && (
         <div className="min-h-0 min-w-0 border-ink border-l-2">
-          <ArtifactWorkspace artifactId={selectedArtifactId} onClose={closeArtifact} onAskTutor={askTutor} />
+          {panelView}
         </div>
       )}
-      {!wide && selectedArtifactId !== null && (
-        <div className="fixed inset-0 z-20 flex justify-end bg-ink/35" onClick={closeArtifact}>
-          <div className="h-full w-[480px] max-w-full border-ink border-l-2 shadow-hard-lg" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Panel de práctica">
-            <ArtifactWorkspace artifactId={selectedArtifactId} onClose={closeArtifact} onAskTutor={askTutor} />
+      {!wide && panelView !== null && (
+        <div className="fixed inset-0 z-20 flex justify-end bg-ink/35" onClick={closePanel}>
+          <div className="h-full w-[480px] max-w-full border-ink border-l-2 shadow-hard-lg" onClick={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label={panel?.kind === "tutoring" ? "Tutorías" : "Panel de práctica"}>
+            {panelView}
           </div>
         </div>
       )}

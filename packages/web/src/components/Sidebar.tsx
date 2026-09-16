@@ -1,10 +1,12 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { folderOf, type AgentSessionSummary, type ArtifactSummary, type PdfMaterial } from "@proxus/shared";
+import { folderOf, type AgentSessionSummary, type ArtifactSummary, type FolderSubject, type PdfMaterial } from "@proxus/shared";
 import { useState, type DragEvent } from "react";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactsQuery } from "../domain/artifacts/atoms.ts";
 import { sessionsQuery } from "../domain/folders/atoms.ts";
 import { materialsQuery } from "../domain/materials/atoms.ts";
+import { tutorsFor } from "../domain/tutoring/fixtures.ts";
+import { useTutoringState } from "../domain/tutoring/store.ts";
 import { FolderSwitcher } from "./FolderSwitcher.tsx";
 import { deleteMaterial } from "../domain/materials/upload.ts";
 import type { MaterialUploader } from "../domain/materials/use-material-upload.tsx";
@@ -28,9 +30,13 @@ interface SidebarProps {
   readonly uploader: MaterialUploader;
   readonly selectedArtifactId: string | null;
   readonly onSelectArtifact: (artifactId: string) => void;
+  /** Subject of the open folder, when it names one; drives the tutoring section. */
+  readonly subject: FolderSubject | undefined;
+  readonly tutoringOpen: boolean;
+  readonly onOpenTutoring: () => void;
 }
 
-export function Sidebar({ folder, uploader, selectedArtifactId, onSelectArtifact }: SidebarProps) {
+export function Sidebar({ folder, uploader, selectedArtifactId, onSelectArtifact, subject, tutoringOpen, onOpenTutoring }: SidebarProps) {
   return (
     <aside className="flex h-full min-h-0 flex-col border-ink border-r-2 bg-paper">
       <Brand />
@@ -39,8 +45,63 @@ export function Sidebar({ folder, uploader, selectedArtifactId, onSelectArtifact
         <MaterialsSection folderId={folder.folderId} uploader={uploader} />
         <SessionsSection folder={folder} />
         <PracticeList folderId={folder.folderId} selectedArtifactId={selectedArtifactId} onSelectArtifact={onSelectArtifact} />
+        <TutoringSection folderId={folder.folderId} subject={subject} open={tutoringOpen} onOpen={onOpenTutoring} />
       </div>
     </aside>
+  );
+}
+
+// --- Tutorías ----------------------------------------------------------------------------
+
+/**
+ * Tutoring between students for the folder's subject: the next booked session
+ * or how many tutors have a slot this week. Without a subject it says how to
+ * get one. Sample data; see `domain/tutoring`.
+ */
+export function TutoringSection({ folderId, subject, open, onOpen }: {
+  readonly folderId: string;
+  readonly subject: FolderSubject | undefined;
+  readonly open: boolean;
+  readonly onOpen: () => void;
+}) {
+  const state = useTutoringState();
+  const upcoming = state.bookings.find((booking) => booking.folderId === folderId && booking.status === "upcoming");
+  const tutorCount = subject === undefined ? 0 : tutorsFor(subject).length;
+
+  return (
+    <section>
+      <div className="mb-2.5 flex items-center justify-between gap-3">
+        <SectionTitle color="bg-mint">Tutorías</SectionTitle>
+        {subject !== undefined && <span className="badge badge-neutral" style={{ height: 22 }}>{state.points} puntos</span>}
+      </div>
+      {subject === undefined
+        ? (
+            <p className="rounded-md border-2 border-line border-dashed p-3.5 text-center font-semibold text-ink-subtle text-sm">
+              Indica la asignatura de la carpeta (lápiz, arriba) para ver tutores de tu grado.
+            </p>
+          )
+        : upcoming !== undefined
+          ? (
+              <button className={`flex w-full items-center gap-2.5 p-3 text-left transition ${open ? "card bg-sun-soft" : "card bg-mint-soft hover:bg-sun-soft"}`} type="button" onClick={onOpen} aria-current={open ? "true" : undefined}>
+                <span className="grid size-[34px] shrink-0 place-items-center rounded-sm border-2 border-ink bg-paper font-display font-semibold" aria-hidden="true">{upcoming.tutorName[0]}</span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-extrabold text-sm leading-tight">{upcoming.slotLabel} · {upcoming.tutorName}</span>
+                  <span className="mt-0.5 block truncate font-semibold text-ink-muted text-sm">{upcoming.focus} · {upcoming.minutes} min</span>
+                </span>
+                <Icon name="chevron" size={16} className="shrink-0 text-ink" />
+              </button>
+            )
+          : (
+              <button className={`flex w-full items-center gap-2.5 p-3 text-left transition ${open ? "card bg-sun-soft" : "card-flat hover:border-ink"}`} type="button" onClick={onOpen} aria-current={open ? "true" : undefined}>
+                <span className="kind-icon bg-mint-soft text-mint-ink" style={{ width: 34, height: 34 }}><Icon name="people" size={18} /></span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-extrabold text-sm leading-tight">{tutorCount} tutores de tu grado</span>
+                  <span className="mt-0.5 block font-semibold text-ink-muted text-sm">{subject.name} · con hueco esta semana</span>
+                </span>
+                <Icon name="chevron" size={16} className="shrink-0 text-ink" />
+              </button>
+            )}
+    </section>
   );
 }
 

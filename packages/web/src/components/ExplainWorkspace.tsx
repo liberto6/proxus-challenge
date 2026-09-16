@@ -16,7 +16,7 @@ import { useSimulatedDictation } from "../domain/explain/simulated-dictation.ts"
 import { formatPages, pluralize } from "../lib/format.ts";
 import type { AskTutorContext } from "./ArtifactWorkspace.tsx";
 import { Icon, kindLabel } from "./icons.tsx";
-import { ArtifactProvenance, PagePreview, ScoreSummary, formatScore, useMaterialAvailable } from "./workspace-parts.tsx";
+import { ArtifactProvenance, PagePreview, ScoreSummary, TutoringHook, deservesTutoring, formatScore, useMaterialAvailable, type TutoringOffer } from "./workspace-parts.tsx";
 
 /**
  * The explanation objective: the student explains the topic in their own words
@@ -37,9 +37,10 @@ const statusMark: Record<KeyPointStatus, string> = { covered: "mark-covered", pa
 const isGradedExplain = (attempt: ArtifactAttempt): attempt is GradedExplainAttempt =>
   attempt.artifactKind === "explain" && attempt.status === "graded";
 
-export function ExplainWorkspace({ artifact, onAskTutor }: {
+export function ExplainWorkspace({ artifact, onAskTutor, tutoring }: {
   readonly artifact: ExplainArtifactView;
   readonly onAskTutor: (text: string, context?: AskTutorContext) => void;
+  readonly tutoring?: TutoringOffer | undefined;
 }) {
   const [transcript, setTranscript] = useState("");
   const [inputMode, setInputMode] = useState<ExplainInputMode>("text");
@@ -159,6 +160,7 @@ export function ExplainWorkspace({ artifact, onAskTutor }: {
             onRetry={reset}
           />
         )}
+        {attempt !== null && tutoring !== undefined && deservesTutoring(attempt.score, attempt.maxScore) && <TutoringHook offer={tutoring} topic={artifact.title} />}
 
         <div className="flex flex-wrap items-center gap-2 font-bold text-ink-muted text-sm">
           <span className="badge badge-lila">{kindLabel.explain}</span>

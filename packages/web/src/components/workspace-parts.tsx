@@ -93,6 +93,32 @@ const scoreTone = (ratio: number): { text: string; ring: string; title: string }
 /** "2,5" for half points, "3" otherwise. */
 export const formatScore = (score: number): string => Number.isInteger(score) ? String(score) : score.toFixed(1).replace(".", ",");
 
+/** Tutoring between students for the folder's subject, offered under a weak result. */
+export interface TutoringOffer {
+  readonly subjectName: string;
+  /** Opens the tutoring panel, filtered by the topic of the artifact. */
+  readonly open: (topic?: string) => void;
+}
+
+/** A result under 50 % is where a human tutor is offered. */
+export const deservesTutoring = (score: number, maxScore: number): boolean => maxScore > 0 && score / maxScore < 0.5;
+
+/**
+ * The hook: where the tutoring offer appears without being searched for.
+ * Shown under the score when the attempt went badly and the folder names its subject.
+ */
+export function TutoringHook({ offer, topic }: { readonly offer: TutoringOffer; readonly topic: string }) {
+  return (
+    <div className="flex shrink-0 items-center gap-2.5 rounded-md border-2 border-ink bg-mint-soft px-3 py-2.5 font-bold text-[13px]" role="note">
+      <span className="kind-icon bg-paper text-mint-ink" style={{ width: 30, height: 30 }}><Icon name="people" size={16} /></span>
+      <span className="min-w-0 flex-1">
+        ¿Prefieres que te lo explique alguien de tu grado?{" "}
+        <button className="font-extrabold text-lila-ink underline" type="button" onClick={() => offer.open(topic)}>Ver tutores de {offer.subjectName} para este tema →</button>
+      </span>
+    </div>
+  );
+}
+
 /** Score ring with a title by tone, an advice line and a retry button; confetti from 70 %. */
 export function ScoreSummary({ score, maxScore, advice, previous, onRetry, actions }: {
   readonly score: number;

@@ -15,7 +15,9 @@ import { pluralize } from "../lib/format.ts";
 import { DiagramViewer, type PageSource } from "./DiagramViewer.tsx";
 import { ExplainWorkspace } from "./ExplainWorkspace.tsx";
 import { Icon, KindIcon, kindLabel } from "./icons.tsx";
-import { ArtifactProvenance, PagePreview, ScoreSummary, useMaterialAvailable } from "./workspace-parts.tsx";
+import { ArtifactProvenance, PagePreview, ScoreSummary, TutoringHook, deservesTutoring, useMaterialAvailable, type TutoringOffer } from "./workspace-parts.tsx";
+
+export type { TutoringOffer } from "./workspace-parts.tsx";
 
 type Answers = Record<string, string>;
 
@@ -30,9 +32,11 @@ interface ArtifactWorkspaceProps {
   readonly onClose: () => void;
   /** Sends a question about the open artifact (and optionally one of its parts) to the tutor chat. */
   readonly onAskTutor: (text: string, context?: AskTutorContext) => void;
+  /** Tutoring of the folder's subject, when it names one; offered under a weak result. */
+  readonly tutoring?: TutoringOffer | undefined;
 }
 
-export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactWorkspaceProps) {
+export function ArtifactWorkspace({ artifactId, onClose, onAskTutor, tutoring }: ArtifactWorkspaceProps) {
   const artifact = useAtomValue(artifactQuery(artifactId));
   const refresh = useAtomRefresh(artifactQuery(artifactId));
 
@@ -55,8 +59,8 @@ export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactW
               : value.kind === "diagram"
                 ? <DiagramPanel key={value.id} artifact={value} onAskTutor={onAskTutor} />
                 : value.kind === "explain"
-                  ? <ExplainWorkspace key={value.id} artifact={value} onAskTutor={onAskTutor} />
-                  : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} />}
+                  ? <ExplainWorkspace key={value.id} artifact={value} onAskTutor={onAskTutor} tutoring={tutoring} />
+                  : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} tutoring={tutoring} />}
           </>
         )
       })}
@@ -159,9 +163,10 @@ function DiagramPanel({ artifact, onAskTutor }: {
   );
 }
 
-function ExerciseSolver({ artifact, onAskTutor }: {
+function ExerciseSolver({ artifact, onAskTutor, tutoring }: {
   readonly artifact: Extract<Artifact, { readonly kind: "quiz" | "test" }>;
   readonly onAskTutor: (text: string) => void;
+  readonly tutoring: TutoringOffer | undefined;
 }) {
   const [answers, setAnswers] = useState<Answers>({});
   const [attempt, setAttempt] = useState<ArtifactAttempt | null>(null);
@@ -228,6 +233,7 @@ function ExerciseSolver({ artifact, onAskTutor }: {
     <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
       <div ref={scroller} className="flex min-h-0 flex-col gap-4 overflow-y-auto p-5">
         {graded !== undefined && <AttemptSummary attempt={graded} failedIndexes={failedIndexes} onRetry={reset} />}
+        {graded !== undefined && tutoring !== undefined && deservesTutoring(graded.score, graded.maxScore) && <TutoringHook offer={tutoring} topic={artifact.title} />}
 
         <div className="flex flex-wrap items-center gap-2 font-bold text-ink-muted text-sm">
           <span className="badge badge-lila">{kindLabel[artifact.kind]}</span>

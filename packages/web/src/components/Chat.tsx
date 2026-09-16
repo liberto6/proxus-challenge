@@ -52,12 +52,19 @@ interface ChatProps {
   readonly hasMaterials: boolean;
   readonly onRequestUpload: () => void;
   readonly prefill?: ChatPrefill | undefined;
+  /** Tutoring of the folder's subject, offered next to the starter prompts. */
+  readonly tutoring?: TutoringSuggestion | undefined;
   /** Compact header for phones: brand on the left, extra controls on the right. */
   readonly mobile?: boolean;
   readonly headerExtra?: ReactNode;
 }
 
-export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMaterials, onRequestUpload, prefill, mobile = false, headerExtra }: ChatProps) {
+export interface TutoringSuggestion {
+  readonly subjectName: string;
+  readonly onOpen: () => void;
+}
+
+export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMaterials, onRequestUpload, prefill, tutoring, mobile = false, headerExtra }: ChatProps) {
   const sessionId = chatSession.session?.id;
   const sessionState = chatSession.state;
   const [messages, setMessages] = useState<readonly AgentMessage[]>([]);
@@ -246,6 +253,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
                 hasMaterials={hasMaterials}
                 onRequestUpload={onRequestUpload}
                 onPrompt={(prompt) => void submit(prompt)}
+                tutoring={tutoring}
               />
             )
           : (
@@ -357,11 +365,12 @@ function SessionStatus({ state, compact }: { readonly state: "loading" | "ready"
 
 // --- Estado vacío ---------------------------------------------------------------------
 
-function EmptyState({ loading, hasMaterials, onRequestUpload, onPrompt }: {
+function EmptyState({ loading, hasMaterials, onRequestUpload, onPrompt, tutoring }: {
   readonly loading: boolean;
   readonly hasMaterials: boolean;
   readonly onRequestUpload: () => void;
   readonly onPrompt: (prompt: string) => void;
+  readonly tutoring: TutoringSuggestion | undefined;
 }) {
   if (!hasMaterials) {
     return (
@@ -406,6 +415,20 @@ function EmptyState({ loading, hasMaterials, onRequestUpload, onPrompt }: {
           </button>
         ))}
       </div>
+      {tutoring !== undefined && (
+        <button
+          className="card-flat flex w-full items-center gap-3 bg-mint-soft p-3.5 text-left transition hover:border-ink"
+          type="button"
+          onClick={tutoring.onOpen}
+        >
+          <span className="kind-icon bg-paper text-mint-ink" style={{ width: 34, height: 34 }}><Icon name="people" size={18} /></span>
+          <span className="min-w-0 flex-1">
+            <span className="block font-bold text-sm">¿Prefieres que te lo explique alguien de tu grado?</span>
+            <span className="block font-semibold text-ink-muted text-[13px]">Tutorías de {tutoring.subjectName} con compañeros que ya la aprobaron.</span>
+          </span>
+          <Icon name="chevron" size={16} className="shrink-0 text-ink" />
+        </button>
+      )}
     </div>
   );
 }
