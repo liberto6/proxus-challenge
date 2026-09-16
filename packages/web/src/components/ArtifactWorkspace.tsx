@@ -121,6 +121,12 @@ function DiagramPanel({ artifact, onAskTutor }: {
 }) {
   const materials = useAtomValue(materialsQuery);
   const [preview, setPreview] = useState<{ readonly page: number; readonly source: PageSource } | undefined>();
+  const [expanded, setExpanded] = useState(false);
+  // A question for the tutor lives in the chat, so the full-screen view closes first.
+  const ask = (text: string, context?: { readonly nodeId: string }) => {
+    setExpanded(false);
+    onAskTutor(text, context);
+  };
   const materialId = artifact.source?.materialId;
   // Pages can be previewed while the source material still exists.
   const materialAvailable = materialId !== undefined
@@ -139,22 +145,26 @@ function DiagramPanel({ artifact, onAskTutor }: {
       <p className="font-semibold text-[15px] leading-snug">{artifact.summary}</p>
       <DiagramViewer
         artifact={artifact}
-        onAskTutor={(text, nodeId) => onAskTutor(text, { nodeId })}
+        onAskTutor={(text, nodeId) => ask(text, { nodeId })}
         onOpenPage={openPage}
         openPage={preview?.page}
+        expanded={expanded}
+        onExpandedChange={setExpanded}
+        aside={preview !== undefined && materialId !== undefined
+          ? (
+              <PagePreview
+                materialId={materialId}
+                page={preview.page}
+                nodeLabel={preview.source.label}
+                onClose={() => setPreview(undefined)}
+                onAsk={() => ask(
+                  `¿Qué dice la página ${preview.page} sobre «${preview.source.label}»?`,
+                  preview.source.nodeId === undefined ? undefined : { nodeId: preview.source.nodeId }
+                )}
+              />
+            )
+          : undefined}
       />
-      {preview !== undefined && materialId !== undefined && (
-        <PagePreview
-          materialId={materialId}
-          page={preview.page}
-          nodeLabel={preview.source.label}
-          onClose={() => setPreview(undefined)}
-          onAsk={() => onAskTutor(
-            `¿Qué dice la página ${preview.page} sobre «${preview.source.label}»?`,
-            preview.source.nodeId === undefined ? undefined : { nodeId: preview.source.nodeId }
-          )}
-        />
-      )}
     </div>
   );
 }

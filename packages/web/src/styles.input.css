@@ -285,6 +285,44 @@
     box-shadow: 3px 3px 0 var(--color-ink);
   }
 
+  .diagram-stage-expanded {
+    height: auto;
+    min-height: 0;
+    flex: 1 1 auto;
+  }
+
+  /* Esquema a pantalla completa: dibujo a toda altura y columna lateral con el detalle. */
+  .diagram-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    background: var(--color-canvas);
+  }
+
+  .diagram-overlay-body {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr) 380px;
+  }
+
+  .diagram-overlay-body > div {
+    min-height: 0;
+  }
+
+  @media (max-width: 900px) {
+    .diagram-overlay-body {
+      grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: minmax(0, 55vh) minmax(0, 1fr);
+    }
+
+    .diagram-overlay-body > aside {
+      border-left: 0;
+      border-top: 2px solid var(--color-ink);
+    }
+  }
+
   .segmented {
     display: inline-flex;
     padding: 3px;

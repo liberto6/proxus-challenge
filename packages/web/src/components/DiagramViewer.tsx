@@ -1,5 +1,5 @@
 import type { DiagramArtifact, DiagramNode, DiagramNodeKind } from "@proxus/shared";
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
 import { layoutDiagram, splitTransitions, type DiagramLayout, type LayoutEdge, type LayoutGroup, type LayoutNode } from "../domain/diagrams/layout.ts";
 import { toMermaid } from "../domain/diagrams/mermaid.ts";
 import { formatPages } from "../lib/format.ts";
@@ -21,6 +21,11 @@ export interface DiagramViewerProps {
   readonly onOpenPage?: OpenPage | undefined;
   /** Page currently previewed, to mark its chip. */
   readonly openPage?: number | undefined;
+  /** Extra panel (the page preview) shown with the cards, or in the side column when expanded. */
+  readonly aside?: ReactNode;
+  /** Full-screen mode, controlled by the owner so it can close it when the student leaves for the chat. */
+  readonly expanded?: boolean | undefined;
+  readonly onExpandedChange?: ((expanded: boolean) => void) | undefined;
 }
 
 type ViewMode = "diagram" | "list";
@@ -37,7 +42,7 @@ interface ViewBox {
  * neighbours stay lit, the rest dims), follow relations from the node card,
  * switch to the reading list, export as SVG or Mermaid.
  */
-export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: DiagramViewerProps) {
+export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage, aside, expanded = false, onExpandedChange }: DiagramViewerProps) {
   const layout = useMemo(() => layoutDiagram(artifact), [artifact]);
   const [mode, setMode] = useState<ViewMode>("diagram");
   const [selectedId, setSelectedId] = useState<string | undefined>();
@@ -73,6 +78,22 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
     setGroupId(undefined);
     setKindFilter(undefined);
   }, [layout]);
+
+  // Esc leaves the full-screen view (after clearing a selection). Captured at the document
+  // so the app's own Escape handler, which closes the practice panel, does not fire.
+  useEffect(() => {
+    if (!expanded) return;
+    const onEscape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.stopPropagation();
+      setSelectedId((current) => {
+        if (current === undefined) onExpandedChange?.(false);
+        return undefined;
+      });
+    };
+    document.addEventListener("keydown", onEscape, true);
+    return () => document.removeEventListener("keydown", onEscape, true);
+  }, [expanded, onExpandedChange]);
 
   // Wheel zoom must cancel the page scroll, which React's passive onWheel cannot do.
   useEffect(() => {
@@ -174,159 +195,222 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
     }
   };
 
+  const toolbar = (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <div className="segmented" role="tablist" aria-label="Vista del esquema">
+        <button type="button" role="tab" aria-selected={mode === "diagram"} className={mode === "diagram" ? "segmented-on" : ""} onClick={() => setMode("diagram")}>Esquema</button>
+        <button type="button" role="tab" aria-selected={mode === "list"} className={mode === "list" ? "segmented-on" : ""} onClick={() => setMode("list")}>Lista</button>
+      </div>
+      {mode === "diagram" && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button className="icon-btn text-ink" type="button" aria-label="Reducir" title="Reducir (−)" onClick={() => setViewBox((current) => zoomAt(current, layout, 1.2))}><Icon name="minus" size={16} strokeWidth={2.4} /></button>
+          <button className="icon-btn text-ink" type="button" aria-label="Acercar" title="Acercar (+)" onClick={() => setViewBox((current) => zoomAt(current, layout, 1 / 1.2))}><Icon name="plus" size={16} strokeWidth={2.4} /></button>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => setViewBox(fullView(layout))}>Ajustar</button>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={downloadSvg} title="Descargar como imagen SVG"><Icon name="download" size={14} /> SVG</button>
+          <button className="btn btn-ghost btn-sm" type="button" onClick={() => void copyMermaid()} title="Copiar el esquema en formato Mermaid">{copied ? "Copiado" : "Mermaid"}</button>
+          {onExpandedChange !== undefined && !expanded && (
+            <button className="btn btn-secondary btn-sm" type="button" onClick={() => onExpandedChange(true)} title="Ver el esquema a pantalla completa">
+              <Icon name="expand" size={14} strokeWidth={2.4} /> Ampliar
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+
+  const stage = (
+    <div
+      className={`diagram-stage ${expanded ? "diagram-stage-expanded" : ""}`}
+      tabIndex={0}
+      onKeyDown={onKeyDown}
+      aria-label="Esquema interactivo. Arrastra para mover, rueda para ampliar, flechas para desplazar."
+    >
+          <svg
+            ref={svgRef}
+            className="block h-full w-full touch-none select-none"
+            viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label={`${artifact.title}: ${artifact.summary}`}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={() => { drag.current = undefined; }}
+            onDoubleClick={(event) => {
+              if (event.target !== event.currentTarget) return;
+              // In the panel a double click opens the full-screen view; there it refits.
+              if (expanded) setViewBox(fullView(layout));
+              else onExpandedChange?.(true);
+            }}
+            style={{ fontFamily: "Nunito, system-ui, sans-serif", cursor: drag.current === undefined ? "grab" : "grabbing" }}
+          >
+            <defs>
+              <marker id="diagram-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill={palette.inkMuted} />
+              </marker>
+              <marker id="diagram-arrow-lit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill={palette.ink} />
+              </marker>
+            </defs>
+            {layout.bands.map((band, index) => (
+              <g key={band.label}>
+                <rect x={band.x} y={band.y} width={band.width} height={band.height} rx={12} fill={index % 2 === 0 ? palette.sunSoft : palette.surface2} fillOpacity={0.55} stroke={palette.inkMuted} strokeWidth={1} strokeDasharray="3 4" />
+                <text x={band.x + band.width / 2} y={band.y + 20} textAnchor="middle" fontSize={12} fontWeight={800} fill={palette.inkMuted}>{band.label.toLocaleUpperCase()}</text>
+              </g>
+            ))}
+            {layout.groups.map((group) => (
+              <GroupShape
+                key={group.id}
+                group={group}
+                active={groupId === group.id}
+                dim={selectedId !== undefined || (activeView !== undefined && groupId !== group.id)}
+                onSelect={() => { setGroupId((current) => current === group.id ? undefined : group.id); setViewIndex(undefined); select(undefined); setKindFilter(undefined); }}
+              />
+            ))}
+            {layout.edges.map((edge) => (
+              <EdgeShape
+                key={edge.id}
+                edge={edge}
+                state={selectedId !== undefined
+                  ? edge.from === selectedId || edge.to === selectedId ? "lit" : "dim"
+                  : activeView !== undefined
+                    ? viewFocus.has(edge.from) && viewFocus.has(edge.to) ? "lit" : "dim"
+                    : "normal"}
+              />
+            ))}
+            {layout.nodes.map((box) => {
+              const node = nodesById.get(box.id);
+              if (node === undefined) return null;
+              const kind = kindOf(node);
+              const state: NodeState = selectedId !== undefined
+                ? box.id === selectedId ? "selected" : neighbours.has(box.id) ? "lit" : "dim"
+                : activeView !== undefined
+                  ? viewFocus.has(box.id) ? "lit" : "dim"
+                  : kindFilter !== undefined && kind !== kindFilter ? "dim" : "normal";
+              return (
+                <NodeShape
+                  key={box.id}
+                  box={box}
+                  node={node}
+                  kind={kind}
+                  state={state}
+                  onSelect={() => select(box.id === selectedId ? undefined : box.id)}
+                />
+              );
+            })}
+          </svg>
+    </div>
+  );
+
+  const viewsBar = (
+    <>
+    {views.length > 0 && (
+      <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Vistas guiadas">
+        <span className="font-extrabold text-ink-muted text-xs uppercase tracking-wider">Ver:</span>
+        {views.map((view, index) => (
+          <button
+            key={index}
+            type="button"
+            className={`btn btn-sm ${viewIndex === index ? "btn-secondary" : "btn-ghost"}`}
+            aria-pressed={viewIndex === index}
+            onClick={() => { setViewIndex((current) => current === index ? undefined : index); setGroupId(undefined); select(undefined); setKindFilter(undefined); }}
+          >
+            {view.label}
+          </button>
+        ))}
+        {activeView !== undefined && "note" in activeView && activeView.note !== undefined && <span className="basis-full font-semibold text-ink-muted text-sm">{activeView.note}</span>}
+      </div>
+    )}
+    </>
+  );
+
+  const legendBar = (
+    <>
+    {legend.length > 1 && (
+      <ul className="flex flex-wrap gap-1.5" aria-label="Leyenda de tipos de concepto">
+        {legend.map(([kind, count]) => (
+          <li key={kind}>
+            <button
+              type="button"
+              className={`badge cursor-pointer hover:border-ink ${kindFilter === kind ? "badge-sun" : "badge-neutral"}`}
+              aria-pressed={kindFilter === kind}
+              title={kindFilter === kind ? "Quitar el filtro" : `Ver solo: ${kindLabels[kind]}`}
+              onClick={() => { setKindFilter((current) => current === kind ? undefined : kind); select(undefined); setViewIndex(undefined); setGroupId(undefined); }}
+            >
+              <span className="inline-block size-2.5 rounded-sm border border-ink" style={{ background: kindStyles[kind].fill }} aria-hidden="true" />
+              {kindLabels[kind]} · {count}
+            </button>
+          </li>
+        ))}
+      </ul>
+    )}
+    </>
+  );
+
+  const nodePanel = (
+    <>
+    {selected === undefined
+      ? <p className="font-semibold text-ink-subtle text-sm">Toca un concepto para ver su explicación, sus páginas y sus relaciones.</p>
+      : (
+          <NodeCard
+            artifact={artifact}
+            node={selected}
+            openPage={openPage}
+            onFollow={follow}
+            onOpenPage={onOpenPage}
+            onAskTutor={onAskTutor}
+            onClose={() => select(undefined)}
+          />
+        )}
+    </>
+  );
+
+  const cards = <DiagramCards artifact={artifact} openPage={openPage} onOpenPage={onOpenPage} />;
+
+  if (expanded) {
+    return (
+      <div className="diagram-overlay" role="dialog" aria-modal="true" aria-label={`Esquema a pantalla completa: ${artifact.title}`}>
+        <header className="flex h-[60px] items-center gap-3 border-ink border-b-2 bg-paper px-4">
+          <h2 className="min-w-0 flex-1 truncate font-display font-semibold text-base" title={artifact.title}>{artifact.title}</h2>
+          <button className="btn btn-secondary btn-sm" type="button" onClick={() => onExpandedChange?.(false)} title="Volver al panel (Esc)">
+            <Icon name="collapse" size={14} strokeWidth={2.4} /> Cerrar
+          </button>
+        </header>
+        <div className="diagram-overlay-body">
+          <div className="flex min-h-0 flex-col gap-3 p-4">
+            {toolbar}
+            {mode === "list"
+              ? <div className="min-h-0 overflow-y-auto"><DiagramList artifact={artifact} onAskTutor={onAskTutor} onOpenPage={onOpenPage} /></div>
+              : stage}
+          </div>
+          <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-ink border-l-2 bg-lila-soft p-4" aria-label="Detalle del esquema">
+            <p className="font-semibold text-[15px] leading-snug">{artifact.summary}</p>
+            {viewsBar}
+            {legendBar}
+            {mode === "diagram" && nodePanel}
+            {aside}
+            {cards}
+          </aside>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="segmented" role="tablist" aria-label="Vista del esquema">
-          <button type="button" role="tab" aria-selected={mode === "diagram"} className={mode === "diagram" ? "segmented-on" : ""} onClick={() => setMode("diagram")}>Esquema</button>
-          <button type="button" role="tab" aria-selected={mode === "list"} className={mode === "list" ? "segmented-on" : ""} onClick={() => setMode("list")}>Lista</button>
-        </div>
-        {mode === "diagram" && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button className="icon-btn text-ink" type="button" aria-label="Reducir" title="Reducir (−)" onClick={() => setViewBox((current) => zoomAt(current, layout, 1.2))}><Icon name="minus" size={16} strokeWidth={2.4} /></button>
-            <button className="icon-btn text-ink" type="button" aria-label="Ampliar" title="Ampliar (+)" onClick={() => setViewBox((current) => zoomAt(current, layout, 1 / 1.2))}><Icon name="plus" size={16} strokeWidth={2.4} /></button>
-            <button className="btn btn-ghost btn-sm" type="button" onClick={() => setViewBox(fullView(layout))}>Ajustar</button>
-            <button className="btn btn-ghost btn-sm" type="button" onClick={downloadSvg} title="Descargar como imagen SVG"><Icon name="download" size={14} /> SVG</button>
-            <button className="btn btn-ghost btn-sm" type="button" onClick={() => void copyMermaid()} title="Copiar el esquema en formato Mermaid">{copied ? "Copiado" : "Mermaid"}</button>
-          </div>
-        )}
-      </div>
-
+      {toolbar}
       {mode === "list"
         ? <DiagramList artifact={artifact} onAskTutor={onAskTutor} onOpenPage={onOpenPage} />
         : (
             <>
-              <div
-                className="diagram-stage"
-                tabIndex={0}
-                onKeyDown={onKeyDown}
-                aria-label="Esquema interactivo. Arrastra para mover, rueda para ampliar, flechas para desplazar."
-              >
-                <svg
-                  ref={svgRef}
-                  className="block h-full w-full touch-none select-none"
-                  viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
-                  preserveAspectRatio="xMidYMid meet"
-                  role="img"
-                  aria-label={`${artifact.title}: ${artifact.summary}`}
-                  onPointerDown={onPointerDown}
-                  onPointerMove={onPointerMove}
-                  onPointerUp={onPointerUp}
-                  onPointerCancel={() => { drag.current = undefined; }}
-                  onDoubleClick={(event) => { if (event.target === event.currentTarget) setViewBox(fullView(layout)); }}
-                  style={{ fontFamily: "Nunito, system-ui, sans-serif", cursor: drag.current === undefined ? "grab" : "grabbing" }}
-                >
-                  <defs>
-                    <marker id="diagram-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill={palette.inkMuted} />
-                    </marker>
-                    <marker id="diagram-arrow-lit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                      <path d="M 0 0 L 10 5 L 0 10 z" fill={palette.ink} />
-                    </marker>
-                  </defs>
-                  {layout.bands.map((band, index) => (
-                    <g key={band.label}>
-                      <rect x={band.x} y={band.y} width={band.width} height={band.height} rx={12} fill={index % 2 === 0 ? palette.sunSoft : palette.surface2} fillOpacity={0.55} stroke={palette.inkMuted} strokeWidth={1} strokeDasharray="3 4" />
-                      <text x={band.x + band.width / 2} y={band.y + 20} textAnchor="middle" fontSize={12} fontWeight={800} fill={palette.inkMuted}>{band.label.toLocaleUpperCase()}</text>
-                    </g>
-                  ))}
-                  {layout.groups.map((group) => (
-                    <GroupShape
-                      key={group.id}
-                      group={group}
-                      active={groupId === group.id}
-                      dim={selectedId !== undefined || (activeView !== undefined && groupId !== group.id)}
-                      onSelect={() => { setGroupId((current) => current === group.id ? undefined : group.id); setViewIndex(undefined); select(undefined); setKindFilter(undefined); }}
-                    />
-                  ))}
-                  {layout.edges.map((edge) => (
-                    <EdgeShape
-                      key={edge.id}
-                      edge={edge}
-                      state={selectedId !== undefined
-                        ? edge.from === selectedId || edge.to === selectedId ? "lit" : "dim"
-                        : activeView !== undefined
-                          ? viewFocus.has(edge.from) && viewFocus.has(edge.to) ? "lit" : "dim"
-                          : "normal"}
-                    />
-                  ))}
-                  {layout.nodes.map((box) => {
-                    const node = nodesById.get(box.id);
-                    if (node === undefined) return null;
-                    const kind = kindOf(node);
-                    const state: NodeState = selectedId !== undefined
-                      ? box.id === selectedId ? "selected" : neighbours.has(box.id) ? "lit" : "dim"
-                      : activeView !== undefined
-                        ? viewFocus.has(box.id) ? "lit" : "dim"
-                        : kindFilter !== undefined && kind !== kindFilter ? "dim" : "normal";
-                    return (
-                      <NodeShape
-                        key={box.id}
-                        box={box}
-                        node={node}
-                        kind={kind}
-                        state={state}
-                        onSelect={() => select(box.id === selectedId ? undefined : box.id)}
-                      />
-                    );
-                  })}
-                </svg>
-              </div>
-
-              {views.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Vistas guiadas">
-                  <span className="font-extrabold text-ink-muted text-xs uppercase tracking-wider">Ver:</span>
-                  {views.map((view, index) => (
-                    <button
-                      key={index}
-                      type="button"
-                      className={`btn btn-sm ${viewIndex === index ? "btn-secondary" : "btn-ghost"}`}
-                      aria-pressed={viewIndex === index}
-                      onClick={() => { setViewIndex((current) => current === index ? undefined : index); setGroupId(undefined); select(undefined); setKindFilter(undefined); }}
-                    >
-                      {view.label}
-                    </button>
-                  ))}
-                  {activeView !== undefined && "note" in activeView && activeView.note !== undefined && <span className="basis-full font-semibold text-ink-muted text-sm">{activeView.note}</span>}
-                </div>
-              )}
-
-              {legend.length > 1 && (
-                <ul className="flex flex-wrap gap-1.5" aria-label="Leyenda de tipos de concepto">
-                  {legend.map(([kind, count]) => (
-                    <li key={kind}>
-                      <button
-                        type="button"
-                        className={`badge cursor-pointer hover:border-ink ${kindFilter === kind ? "badge-sun" : "badge-neutral"}`}
-                        aria-pressed={kindFilter === kind}
-                        title={kindFilter === kind ? "Quitar el filtro" : `Ver solo: ${kindLabels[kind]}`}
-                        onClick={() => { setKindFilter((current) => current === kind ? undefined : kind); select(undefined); setViewIndex(undefined); setGroupId(undefined); }}
-                      >
-                        <span className="inline-block size-2.5 rounded-sm border border-ink" style={{ background: kindStyles[kind].fill }} aria-hidden="true" />
-                        {kindLabels[kind]} · {count}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {selected === undefined
-                ? <p className="font-semibold text-ink-subtle text-sm">Toca un concepto para ver su explicación, sus páginas y sus relaciones.</p>
-                : (
-                    <NodeCard
-                      artifact={artifact}
-                      node={selected}
-                      openPage={openPage}
-                      onFollow={follow}
-                      onOpenPage={onOpenPage}
-                      onAskTutor={onAskTutor}
-                      onClose={() => select(undefined)}
-                    />
-                  )}
+              {stage}
+              {viewsBar}
+              {legendBar}
+              {nodePanel}
             </>
           )}
-
-      <DiagramCards artifact={artifact} openPage={openPage} onOpenPage={onOpenPage} />
+      {aside}
+      {cards}
     </div>
   );
 }

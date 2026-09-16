@@ -26,7 +26,9 @@ export type IconName =
   | "alert"
   | "plus"
   | "minus"
-  | "download";
+  | "download"
+  | "expand"
+  | "collapse";
 
 const paths: Record<IconName, string> = {
   pdf: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/>',
@@ -50,7 +52,9 @@ const paths: Record<IconName, string> = {
   alert: '<path d="M12 3 2 20h20z"/><path d="M12 9v5M12 17h.01"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   minus: '<path d="M5 12h14"/>',
-  download: '<path d="M12 4v12"/><path d="m6 10 6 6 6-6"/><path d="M4 20h16"/>'
+  download: '<path d="M12 4v12"/><path d="m6 10 6 6 6-6"/><path d="M4 20h16"/>',
+  expand: '<path d="M15 3h6v6M9 21H3v-6"/><path d="M21 3l-7 7M3 21l7-7"/>',
+  collapse: '<path d="M4 14h6v6M20 10h-6V4"/><path d="M14 10l7-7M3 21l7-7"/>'
 };
 
 export function Icon({ name, size = 16, className, strokeWidth = 2 }: {
