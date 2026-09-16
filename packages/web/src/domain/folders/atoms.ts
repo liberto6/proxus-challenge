@@ -1,3 +1,4 @@
+import type { CreateFolderInput, UpdateFolderInput } from "@proxus/shared";
 import { Effect } from "effect";
 import * as Atom from "effect/unstable/reactivity/Atom";
 import { ApiClient } from "../../api-client/client.ts";
@@ -22,16 +23,17 @@ export const sessionsQuery = apiRuntime
   .pipe(Atom.keepAlive, Atom.withReactivity(["sessions"]));
 
 export const createFolderAction = apiRuntime.fn(
-  (title: string) =>
-    ApiClient.use((client) => client.folders.create({ payload: { title } }))
+  (input: CreateFolderInput) =>
+    ApiClient.use((client) => client.folders.create({ payload: input }))
       .pipe(Effect.withSpan("folders.create", { kind: "client" })),
   { reactivityKeys: ["folders"] }
 );
 
-export const renameFolderAction = apiRuntime.fn(
-  (input: { readonly id: string; readonly title: string }) =>
-    ApiClient.use((client) => client.folders.rename({ params: { id: input.id }, payload: { title: input.title } }))
-      .pipe(Effect.withSpan("folders.rename", { kind: "client" })),
+/** Title and subject together; `subject: null` clears the subject. */
+export const updateFolderAction = apiRuntime.fn(
+  (input: { readonly id: string } & UpdateFolderInput) =>
+    ApiClient.use((client) => client.folders.update({ params: { id: input.id }, payload: { title: input.title, ...(input.subject === undefined ? {} : { subject: input.subject }) } }))
+      .pipe(Effect.withSpan("folders.update", { kind: "client" })),
   { reactivityKeys: ["folders"] }
 );
 

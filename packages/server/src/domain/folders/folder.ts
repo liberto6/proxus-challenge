@@ -1,12 +1,12 @@
 import { Context, Data, Effect, Option } from "effect";
-import { folderOf, folderTitleLimits, generalFolderId, generalFolderTitle, type Folder } from "@proxus/shared";
+import { folderOf, folderTitleLimits, generalFolderId, generalFolderTitle, type Folder, type FolderSubject } from "@proxus/shared";
 
 /**
  * Folders group materials, conversations and practice. Membership lives on
  * each item (`folderId`, absent = General), so the repository only stores the
  * folders themselves. `General` always exists: it is virtual until renamed.
  */
-export { Folder, folderOf, generalFolderId, generalFolderTitle } from "@proxus/shared";
+export { Folder, FolderSubject, folderOf, generalFolderId, generalFolderTitle } from "@proxus/shared";
 
 export class FolderNotFound extends Data.TaggedError("FolderNotFound")<{
   readonly folderId: string;
@@ -25,12 +25,23 @@ export class FolderRepositoryError extends Data.TaggedError("FolderRepositoryErr
   readonly reason: unknown;
 }> {}
 
+export interface CreateFolder {
+  readonly title: string;
+  readonly subject?: FolderSubject | undefined;
+}
+
+export interface UpdateFolder {
+  readonly title: string;
+  /** Absent keeps the current subject; `null` clears it. */
+  readonly subject?: FolderSubject | null | undefined;
+}
+
 export interface FolderRepository {
   /** All folders, General first, the rest by creation date. */
   readonly list: () => Effect.Effect<readonly Folder[], FolderRepositoryError>;
   readonly get: (id: string) => Effect.Effect<Folder, FolderNotFound | FolderRepositoryError>;
-  readonly create: (title: string) => Effect.Effect<Folder, FolderTitleInvalid | FolderTitleTakenError | FolderRepositoryError>;
-  readonly rename: (id: string, title: string) => Effect.Effect<Folder, FolderNotFound | FolderTitleInvalid | FolderTitleTakenError | FolderRepositoryError>;
+  readonly create: (input: CreateFolder) => Effect.Effect<Folder, FolderTitleInvalid | FolderTitleTakenError | FolderRepositoryError>;
+  readonly update: (id: string, input: UpdateFolder) => Effect.Effect<Folder, FolderNotFound | FolderTitleInvalid | FolderTitleTakenError | FolderRepositoryError>;
   /** Deletes the folder record only; the caller checks it is empty first. General cannot be removed. */
   readonly remove: (id: string) => Effect.Effect<void, FolderNotFound | FolderRepositoryError>;
 }

@@ -164,12 +164,12 @@ export const FoldersHttpHandlers = HttpApiBuilder.group(
         Effect.map((items) => ({ folders: items })),
         Effect.orDie
       ))
-      .handle("create", ({ payload }) => folders.create(payload.title).pipe(
+      .handle("create", ({ payload }) => folders.create(payload).pipe(
         Effect.catchTag("FolderTitleInvalid", () => new HttpApiError.BadRequest()),
         Effect.catchTag("FolderTitleTaken", (error) => new FolderTitleTaken({ title: error.title })),
         Effect.catchTag("FolderRepositoryError", (error) => Effect.die(error))
       ))
-      .handle("rename", ({ params, payload }) => folders.rename(params.id, payload.title).pipe(
+      .handle("update", ({ params, payload }) => folders.update(params.id, payload).pipe(
         Effect.catchTag("FolderNotFound", () => new HttpApiError.NotFound()),
         Effect.catchTag("FolderTitleInvalid", () => new HttpApiError.BadRequest()),
         Effect.catchTag("FolderTitleTaken", (error) => new FolderTitleTaken({ title: error.title })),

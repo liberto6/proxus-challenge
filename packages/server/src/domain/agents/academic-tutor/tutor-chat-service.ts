@@ -7,7 +7,7 @@ import { AgentSession, SessionNotFound, SessionRepository, type AgentMessage } f
 import { makeAcademicTutorHarness } from "../academic-tutor.ts";
 import { describeUiContext } from "./ui-context.ts";
 import { tutorOptions } from "./tutor-options.ts";
-import { FolderRepository, FolderScope, folderOf, inScope } from "../../folders/folder.ts";
+import { FolderRepository, FolderScope, folderOf, inScope, type Folder } from "../../folders/folder.ts";
 
 /**
  * Runs tutor turns against a persisted session.
@@ -72,9 +72,10 @@ export const TutorChatServiceLive = Layer.effect(
     // The folder the conversation lives in: the tutor sees only its materials.
     // The note names it so the tutor can say "in this folder" instead of "you have no materials".
     const folderNote = (folderId: string): Effect.Effect<string> => Effect.gen(function* () {
-      const folder = yield* folders.get(folderId).pipe(Effect.catch(() => Effect.succeed({ id: folderId, title: folderId })));
+      const folder: Folder = yield* folders.get(folderId).pipe(Effect.catch(() => Effect.succeed<Folder>({ id: folderId, title: folderId, createdAt: "" })));
       const count = (yield* materialRepository.list().pipe(Effect.catch(() => Effect.succeed([])))).filter((material) => inScope(folderId, material)).length;
-      return `FOLDER: the student is working in the folder "${folder.title}" (${count} material(s)). Only that folder's materials and artifacts are available; PDFs of other folders cannot be read from this conversation.`;
+      const subject = folder.subject === undefined ? "" : ` It is the subject "${folder.subject.name}" (${folder.subject.degree}, ${folder.subject.university}).`;
+      return `FOLDER: the student is working in the folder "${folder.title}" (${count} material(s)).${subject} Only that folder's materials and artifacts are available; PDFs of other folders cannot be read from this conversation.`;
     });
 
     const turnNotes = (input: TutorChatRequest, folderId: string): Effect.Effect<string> => Effect.gen(function* () {

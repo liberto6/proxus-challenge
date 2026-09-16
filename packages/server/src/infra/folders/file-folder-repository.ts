@@ -10,7 +10,9 @@ import {
   generalFolder,
   generalFolderId,
   normalizeFolderTitle,
-  type FolderRepository as FolderRepositoryType
+  type CreateFolder,
+  type FolderRepository as FolderRepositoryType,
+  type UpdateFolder
 } from "../../domain/folders/folder.ts";
 
 const FolderFromJson = Schema.fromJsonString(Folder);
@@ -63,19 +65,27 @@ export const FileFolderRepository = {
       return clash === undefined ? Effect.void : Effect.fail(new FolderTitleTakenError({ title }));
     }));
 
-    const create = (rawTitle: string) => Effect.gen(function* () {
-      const title = yield* normalizeFolderTitle(rawTitle);
+    const create = (input: CreateFolder) => Effect.gen(function* () {
+      const title = yield* normalizeFolderTitle(input.title);
       yield* ensureTitleFree(title);
-      const folder: Folder = { id: folderIdFor(title), title, createdAt: new Date().toISOString() };
+      const folder: Folder = {
+        id: folderIdFor(title),
+        title,
+        createdAt: new Date().toISOString(),
+        ...(input.subject === undefined ? {} : { subject: input.subject })
+      };
       yield* write(folder);
       return folder;
     });
 
-    const rename = (id: string, rawTitle: string) => Effect.gen(function* () {
+    // Renaming General stores it for the first time; the subject follows the same rule.
+    const update = (id: string, input: UpdateFolder) => Effect.gen(function* () {
       const current = yield* get(id);
-      const title = yield* normalizeFolderTitle(rawTitle);
+      const title = yield* normalizeFolderTitle(input.title);
       yield* ensureTitleFree(title, id);
-      const folder: Folder = { ...current, title };
+      const { subject: _current, ...rest } = current;
+      const subject = input.subject === undefined ? current.subject : input.subject === null ? undefined : input.subject;
+      const folder: Folder = { ...rest, title, ...(subject === undefined ? {} : { subject }) };
       yield* write(folder);
       return folder;
     });
@@ -88,7 +98,7 @@ export const FileFolderRepository = {
       yield* fs.remove(folderPath(id)).pipe(Effect.mapError(mapError));
     });
 
-    return { list, get, create, rename, remove };
+    return { list, get, create, update, remove };
   }),
   layer: (directory: string) => Layer.effect(FolderRepository)(FileFolderRepository.make(directory))
 };

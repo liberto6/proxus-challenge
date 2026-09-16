@@ -45,7 +45,7 @@ const GeneralOnlyFolderRepository = Layer.succeed(FolderRepository, {
   list: () => Effect.succeed([generalFolder]),
   get: (id) => id === generalFolder.id ? Effect.succeed(generalFolder) : Effect.fail(new FolderNotFound({ folderId: id })),
   create: () => Effect.die("not used"),
-  rename: () => Effect.die("not used"),
+  update: () => Effect.die("not used"),
   remove: () => Effect.die("not used")
 });
 

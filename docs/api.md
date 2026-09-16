@@ -13,10 +13,12 @@ En local:
 
 ```http
 GET    /api/folders/              # todas, General primera
-POST   /api/folders/              # { title } -> Folder; 400 título vacío, 409 FolderTitleTaken
-PATCH  /api/folders/:id           # { title }; 404, 409
+POST   /api/folders/              # { title, subject? } -> Folder; 400 título vacío, 409 FolderTitleTaken
+PATCH  /api/folders/:id           # { title, subject? }; subject ausente conserva, null borra; 404, 409
 DELETE /api/folders/:id           # 204; 404; 409 FolderNotEmpty { materials, sessions, artifacts }
 ```
+
+`subject` es opcional: `{ university, degree, year?, name }`, elegido en la web de un catálogo universidad → grado → asignatura. Una carpeta sin asignatura funciona igual; con ella, la sección de tutorías sabe qué tutores mostrar y el tutor IA la ve en su nota de carpeta.
 
 Una carpeta agrupa materiales, conversaciones y práctica. La pertenencia va en cada elemento (`folderId` opcional en `PdfMaterial`, `AgentSession`, `Artifact` y sus resúmenes); sin `folderId` el elemento está en **General** (`general`), que existe siempre, se puede renombrar y no se borra. Los listados aceptan `?folderId=`. Borrar una carpeta se rechaza mientras tenga PDF, conversaciones con mensajes o artefactos (las conversaciones vacías se eliminan con ella). No hay mover ni copiar entre carpetas: un PDF pertenece a una carpeta.
 

@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiError, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
-import { CreateFolderInput, Folder, FolderListResponse, FolderNotEmpty, FolderTitleTaken, RenameFolderInput } from "../schemas/folder.ts";
+import { CreateFolderInput, Folder, FolderListResponse, FolderNotEmpty, FolderTitleTaken, UpdateFolderInput } from "../schemas/folder.ts";
 
 /**
  * Folders group materials, conversations and practice. There is no move or
@@ -17,11 +17,11 @@ export class FoldersApi extends HttpApiGroup.make("folders")
       success: Folder,
       error: [HttpApiError.BadRequest, HttpApiSchema.status(409)(FolderTitleTaken)]
     }),
-    HttpApiEndpoint.patch("rename", "/:id", {
+    HttpApiEndpoint.patch("update", "/:id", {
       params: {
         id: Schema.String
       },
-      payload: RenameFolderInput,
+      payload: UpdateFolderInput,
       success: Folder,
       error: [HttpApiError.BadRequest, HttpApiError.NotFound, HttpApiSchema.status(409)(FolderTitleTaken)]
     }),

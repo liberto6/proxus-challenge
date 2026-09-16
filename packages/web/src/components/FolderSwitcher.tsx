@@ -1,8 +1,9 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { generalFolderId, type Folder } from "@proxus/shared";
+import { generalFolderId, type Folder, type FolderSubject } from "@proxus/shared";
 import { useEffect, useRef, useState } from "react";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
-import { createFolderAction, deleteFolderAction, describeFolderError, foldersQuery, renameFolderAction } from "../domain/folders/atoms.ts";
+import { createFolderAction, deleteFolderAction, describeFolderError, foldersQuery, updateFolderAction } from "../domain/folders/atoms.ts";
+import { catalog, degreesOf, describeSubject, subjectsOf } from "../domain/tutoring/catalog.ts";
 import { Icon } from "./icons.tsx";
 
 interface FolderSwitcherProps {
@@ -14,17 +15,38 @@ interface FolderSwitcherProps {
 
 type Editing = { readonly mode: "create" } | { readonly mode: "rename"; readonly folder: Folder } | undefined;
 
+/** The three catalogue choices while editing; empty strings until chosen. */
+interface SubjectDraft {
+  readonly university: string;
+  readonly degree: string;
+  readonly name: string;
+}
+
+const emptyDraft: SubjectDraft = { university: "", degree: "", name: "" };
+
+const draftOf = (subject: FolderSubject | undefined): SubjectDraft =>
+  subject === undefined ? emptyDraft : { university: subject.university, degree: subject.degree, name: subject.name };
+
+const subjectOf = (draft: SubjectDraft): FolderSubject | undefined => {
+  if (draft.university === "" || draft.degree === "" || draft.name === "") return undefined;
+  const year = subjectsOf(draft.university, draft.degree).find((subject) => subject.name === draft.name)?.year;
+  return { university: draft.university, degree: draft.degree, name: draft.name, ...(year === undefined ? {} : { year }) };
+};
+
 /**
  * The folder the student is working in, with the small management around it:
- * create, rename, delete (only when empty; General never).
+ * create, rename, delete (only when empty; General never). A folder may name
+ * its subject (university → degree → subject); the chip under the selector
+ * shows it and the tutoring section uses it.
  */
 export function FolderSwitcher({ folderId, onSelect, onDeleted }: FolderSwitcherProps) {
   const folders = useAtomValue(foldersQuery);
   const createFolder = useAtomSet(createFolderAction, { mode: "promise" });
-  const renameFolder = useAtomSet(renameFolderAction, { mode: "promise" });
+  const updateFolder = useAtomSet(updateFolderAction, { mode: "promise" });
   const deleteFolder = useAtomSet(deleteFolderAction, { mode: "promise" });
   const [editing, setEditing] = useState<Editing>();
   const [title, setTitle] = useState("");
+  const [draft, setDraft] = useState<SubjectDraft>(emptyDraft);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -39,6 +61,7 @@ export function FolderSwitcher({ folderId, onSelect, onDeleted }: FolderSwitcher
 
   const startCreate = () => {
     setTitle("");
+    setDraft(emptyDraft);
     setError(undefined);
     setConfirmDelete(false);
     setEditing({ mode: "create" });
@@ -46,6 +69,7 @@ export function FolderSwitcher({ folderId, onSelect, onDeleted }: FolderSwitcher
   const startRename = () => {
     if (current === undefined) return;
     setTitle(current.title);
+    setDraft(draftOf(current.subject));
     setError(undefined);
     setConfirmDelete(false);
     setEditing({ mode: "rename", folder: current });
@@ -59,13 +83,15 @@ export function FolderSwitcher({ folderId, onSelect, onDeleted }: FolderSwitcher
     if (editing === undefined || busy) return;
     setBusy(true);
     setError(undefined);
+    const subject = subjectOf(draft);
     try {
       if (editing.mode === "create") {
-        const folder = await createFolder(title);
+        const folder = await createFolder({ title, ...(subject === undefined ? {} : { subject }) });
         setEditing(undefined);
         onSelect(folder.id);
       } else {
-        await renameFolder({ id: editing.folder.id, title });
+        // Clearing the three selectors clears the stored subject.
+        await updateFolder({ id: editing.folder.id, title, subject: subject ?? null });
         setEditing(undefined);
       }
     } catch (cause) {
@@ -109,7 +135,7 @@ export function FolderSwitcher({ folderId, onSelect, onDeleted }: FolderSwitcher
         <button className="icon-btn text-ink" type="button" onClick={startCreate} aria-label="Nueva carpeta" title="Nueva carpeta" disabled={editing !== undefined}>
           <Icon name="plus" size={16} strokeWidth={2.4} />
         </button>
-        <button className="icon-btn text-ink" type="button" onClick={startRename} aria-label="Renombrar carpeta" title="Renombrar" disabled={editing !== undefined || current === undefined}>
+        <button className="icon-btn text-ink" type="button" onClick={startRename} aria-label="Editar carpeta" title="Editar nombre y asignatura" disabled={editing !== undefined || current === undefined}>
           <Icon name="test" size={15} />
         </button>
         {folderId !== generalFolderId && (
@@ -119,28 +145,40 @@ export function FolderSwitcher({ folderId, onSelect, onDeleted }: FolderSwitcher
         )}
       </div>
 
+      {editing === undefined && current?.subject !== undefined && (
+        <div className="flex flex-wrap items-center gap-1.5 pl-[18px]">
+          <span className="badge badge-neutral" title={current.subject.name}>{describeSubject(current.subject)}</span>
+          <span className="truncate font-semibold text-ink-muted text-xs">{current.subject.name}</span>
+        </div>
+      )}
+
       {editing !== undefined && (
         <form
-          className="flex items-center gap-2"
+          className="flex flex-col gap-2"
           onSubmit={(event) => {
             event.preventDefault();
             void save();
           }}
         >
-          <input
-            ref={input}
-            className="min-w-0 flex-1 rounded-sm border-2 border-line bg-paper px-2 py-1.5 font-semibold text-sm outline-none focus:border-ink"
-            value={title}
-            maxLength={60}
-            placeholder={editing.mode === "create" ? "Nombre de la carpeta" : "Nuevo nombre"}
-            aria-label={editing.mode === "create" ? "Nombre de la nueva carpeta" : "Nuevo nombre de la carpeta"}
-            onChange={(event) => setTitle(event.currentTarget.value)}
-            onKeyDown={(event) => { if (event.key === "Escape") cancel(); }}
-          />
-          <button className="btn btn-primary btn-sm" type="submit" disabled={busy || title.trim().length === 0}>
-            {editing.mode === "create" ? "Crear" : "Guardar"}
-          </button>
-          <button className="btn btn-ghost btn-sm" type="button" onClick={cancel} disabled={busy}>Cancelar</button>
+          <div className="flex items-center gap-2">
+            <input
+              ref={input}
+              className="min-w-0 flex-1 rounded-sm border-2 border-line bg-paper px-2 py-1.5 font-semibold text-sm outline-none focus:border-ink"
+              value={title}
+              maxLength={60}
+              placeholder={editing.mode === "create" ? "Nombre de la carpeta" : "Nuevo nombre"}
+              aria-label={editing.mode === "create" ? "Nombre de la nueva carpeta" : "Nuevo nombre de la carpeta"}
+              onChange={(event) => setTitle(event.currentTarget.value)}
+              onKeyDown={(event) => { if (event.key === "Escape") cancel(); }}
+            />
+          </div>
+          <SubjectPicker draft={draft} onChange={setDraft} />
+          <div className="flex items-center gap-2">
+            <button className="btn btn-primary btn-sm" type="submit" disabled={busy || title.trim().length === 0}>
+              {editing.mode === "create" ? "Crear" : "Guardar"}
+            </button>
+            <button className="btn btn-ghost btn-sm" type="button" onClick={cancel} disabled={busy}>Cancelar</button>
+          </div>
         </form>
       )}
 
@@ -162,5 +200,45 @@ export function FolderSwitcher({ folderId, onSelect, onDeleted }: FolderSwitcher
         </div>
       )}
     </section>
+  );
+}
+
+/** Optional subject of the folder: three chained selects over the catalogue. */
+function SubjectPicker({ draft, onChange }: { readonly draft: SubjectDraft; readonly onChange: (draft: SubjectDraft) => void }) {
+  const selectClass = "min-w-0 flex-1 rounded-sm border-2 border-line bg-paper px-2 py-1.5 font-semibold text-sm outline-none focus:border-ink disabled:opacity-50";
+  return (
+    <fieldset className="flex flex-col gap-1.5 rounded-md border-2 border-line border-dashed p-2">
+      <legend className="px-1 font-bold text-ink-muted text-xs">Asignatura (opcional)</legend>
+      <select
+        className={selectClass}
+        value={draft.university}
+        aria-label="Universidad"
+        onChange={(event) => onChange({ university: event.currentTarget.value, degree: "", name: "" })}
+      >
+        <option value="">Universidad</option>
+        {catalog.map((university) => <option key={university.name} value={university.name}>{university.name}</option>)}
+      </select>
+      <select
+        className={selectClass}
+        value={draft.degree}
+        aria-label="Grado"
+        disabled={draft.university === ""}
+        onChange={(event) => onChange({ ...draft, degree: event.currentTarget.value, name: "" })}
+      >
+        <option value="">Grado</option>
+        {degreesOf(draft.university).map((degree) => <option key={degree.name} value={degree.name}>{degree.name}</option>)}
+      </select>
+      <select
+        className={selectClass}
+        value={draft.name}
+        aria-label="Asignatura"
+        disabled={draft.degree === ""}
+        onChange={(event) => onChange({ ...draft, name: event.currentTarget.value })}
+      >
+        <option value="">Asignatura</option>
+        {subjectsOf(draft.university, draft.degree).map((subject) => <option key={subject.name} value={subject.name}>{subject.name} · {subject.year}.º</option>)}
+      </select>
+      <p className="font-semibold text-ink-subtle text-xs">Con la asignatura, la carpeta encuentra tutores de tu grado. Sin ella, todo lo demás funciona igual.</p>
+    </fieldset>
   );
 }

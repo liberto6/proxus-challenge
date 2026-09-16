@@ -53,27 +53,39 @@ const repositoriesCase = Effect.gen(function* () {
   const initial = yield* folders.list();
   results.push(criterion("general-exists-by-default", initial.length === 1 && initial[0]?.id === generalFolderId && initial[0].title === "General", initial.map((folder) => folder.id).join(",")));
 
-  const biology = yield* folders.create("  Biología   1º ");
-  const physics = yield* folders.create("Física");
+  const biology = yield* folders.create({ title: "  Biología   1º ", subject: { university: "UCM", degree: "Biología", year: 1, name: "Biología celular" } });
+  const physics = yield* folders.create({ title: "Física" });
   const listed = yield* folders.list();
   results.push(
     criterion("create-normalizes-title-and-slug-id", biology.title === "Biología 1º" && /^biologia-1-[0-9a-f]{6}$/.test(biology.id), `${biology.id}: ${biology.title}`),
     criterion("list-general-first-then-by-creation", listed.map((folder) => folder.id).join(",") === [generalFolderId, biology.id, physics.id].join(","), listed.map((folder) => folder.title).join(" > "))
   );
 
-  const clash = yield* folders.create("biologia 1º").pipe(Effect.exit);
-  const empty = yield* folders.create("   ").pipe(Effect.exit);
+  const clash = yield* folders.create({ title: "biologia 1º" }).pipe(Effect.exit);
+  const empty = yield* folders.create({ title: "   " }).pipe(Effect.exit);
   results.push(
     criterion("create-rejects-title-taken-ignoring-accents", clash._tag === "Failure" && String(clash.cause).includes("FolderTitleTaken"), clash._tag),
     criterion("create-rejects-empty-title", empty._tag === "Failure" && String(empty.cause).includes("FolderTitleInvalid"), empty._tag)
   );
 
-  const renamedGeneral = yield* folders.rename(generalFolderId, "Todo lo demás");
+  const renamedGeneral = yield* folders.update(generalFolderId, { title: "Todo lo demás" });
   const afterRename = yield* folders.list();
   results.push(criterion("general-can-be-renamed-and-is-persisted", renamedGeneral.id === generalFolderId && afterRename[0]?.title === "Todo lo demás", afterRename[0]?.title ?? ""));
 
   const removeGeneral = yield* folders.remove(generalFolderId).pipe(Effect.exit);
   results.push(criterion("general-cannot-be-removed", removeGeneral._tag === "Failure", removeGeneral._tag));
+
+  // The subject travels with the folder: kept on rename, replaced when given, cleared with null.
+  const storedBiology = yield* folders.get(biology.id);
+  const keptSubject = yield* folders.update(biology.id, { title: "Biología 1.º" });
+  const changedSubject = yield* folders.update(biology.id, { title: "Biología 1.º", subject: { university: "UCM", degree: "Biología", year: 2, name: "Fisiología I" } });
+  const clearedSubject = yield* folders.update(biology.id, { title: "Biología 1.º", subject: null });
+  results.push(
+    criterion("subject-persisted-on-create", storedBiology.subject?.name === "Biología celular" && storedBiology.subject.university === "UCM", JSON.stringify(storedBiology.subject)),
+    criterion("subject-kept-on-rename", keptSubject.subject?.name === "Biología celular" && keptSubject.title === "Biología 1.º", JSON.stringify(keptSubject.subject)),
+    criterion("subject-replaced-on-update", changedSubject.subject?.name === "Fisiología I" && changedSubject.subject.year === 2, JSON.stringify(changedSubject.subject)),
+    criterion("subject-cleared-with-null", clearedSubject.subject === undefined && (yield* folders.get(biology.id)).subject === undefined, "no subject")
+  );
 
   // Membership on items.
   const fixture = yield* fs.readFile(path.join("fixtures", "materials", "ciclo-del-agua.pdf"));
