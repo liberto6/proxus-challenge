@@ -46,13 +46,26 @@ export const TutorChatServiceLive = Layer.effect(
     // A turn completed when its last message is the tutor's answer.
     const turnCompleted = (messages: readonly AgentMessage[]) => messages.at(-1)?.role === "assistant";
 
+    // The student's most recent graded attempt on an artifact, so the tutor can
+    // discuss a result ("why is point 2 partial?"). Missing attempts are not an error.
+    const latestGradedAttempt = (artifactId: string) =>
+      artifactRepository.listAttempts(artifactId).pipe(
+        Effect.map((attempts) => attempts
+          .filter((attempt) => attempt.status === "graded")
+          .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""))
+          .at(0)),
+        Effect.catch(() => Effect.succeed(undefined))
+      );
+
     // What the student has open, as a one-turn system note. An unknown artifact
     // id is ignored rather than failing the turn.
     const uiContextNote = (input: TutorChatRequest): Effect.Effect<string | undefined> =>
       input.context?.openArtifactId === undefined
         ? Effect.succeed(undefined)
         : artifactRepository.getArtifact(input.context.openArtifactId).pipe(
-            Effect.map((artifact) => describeUiContext(artifact, { openQuestionId: input.context?.openQuestionId, openNodeId: input.context?.openNodeId })),
+            Effect.flatMap((artifact) => (artifact.kind === "explain" ? latestGradedAttempt(artifact.id) : Effect.succeed(undefined)).pipe(
+              Effect.map((latestAttempt) => describeUiContext(artifact, { openQuestionId: input.context?.openQuestionId, openNodeId: input.context?.openNodeId, latestAttempt }))
+            )),
             Effect.catch(() => Effect.succeed(undefined))
           );
 

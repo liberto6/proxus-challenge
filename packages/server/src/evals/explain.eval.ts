@@ -1,6 +1,15 @@
 import { isMain } from "../lib/is-main.ts";
-import { Console, Data, Effect, Schema } from "effect";
-import { Artifact, ArtifactView, CreateArtifactInput, type CreateExplainArtifactInput, type ExplainArtifact } from "@proxus/shared";
+import { Console, Data, Effect, Layer, Ref, Schema } from "effect";
+import { LanguageModel, Response } from "effect/unstable/ai";
+import { Artifact, ArtifactView, CreateArtifactInput, type CreateExplainArtifactInput, type ExplainArtifact, type GradedExplainAttempt } from "@proxus/shared";
+import { AgentHarness, AgentSession } from "../domain/agents/harness/index.ts";
+import { academicTutorSystemPrompt } from "../domain/agents/academic-tutor.ts";
+import { makeArtifactCommands } from "../domain/agents/academic-tutor/artifact-commands.ts";
+import { makeMaterialCommands } from "../domain/agents/academic-tutor/material-commands.ts";
+import { assessExplanationsExample, makeAcademicTutorSkills } from "../domain/agents/academic-tutor/skills/index.ts";
+import { describeUiContext } from "../domain/agents/academic-tutor/ui-context.ts";
+import { ArtifactNotFound, makeArtifact, type Artifact as ArtifactType, type ArtifactRepository as ArtifactRepositoryType } from "../domain/artifacts/artifact.ts";
+import { MaterialNotFound, MaterialRepository, type MaterialPageImages, type PdfMaterial } from "../domain/materials/material.ts";
 import {
   buildDictationSamples,
   findTerm,
@@ -22,6 +31,9 @@ import {
  *         ranges used for highlighting.
  * Part 3: the sample transcripts of the simulated dictation and the public
  *         projection that keeps the solutions on the server.
+ * Part 4: the tutor with a scripted model: creates after rendering, is rejected
+ *         when the labels are section titles or the pages were not read, repairs.
+ * Part 5: skill text and the UI context note (hidden references, latest attempt).
  *
  *   pnpm --filter @proxus/server run eval:tutor:explain
  */
@@ -216,6 +228,193 @@ const projectionCases = Effect.sync(() => {
   return results;
 });
 
+// --- Part 4: the tutor creates, gets rejected and repairs (scripted model) ---------
+
+const materialId = "ciclo-del-agua";
+
+const fixtureMaterial: PdfMaterial = {
+  id: materialId,
+  title: "El ciclo del agua",
+  fileName: "ciclo-del-agua.pdf",
+  pageCount: 3,
+  uploadedAt: "2026-01-01T00:00:00.000Z"
+};
+
+const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
+
+const ScriptedMaterialRepository = Layer.succeed(MaterialRepository, {
+  list: () => Effect.succeed([fixtureMaterial]),
+  get: (id) => id === materialId ? Effect.succeed(fixtureMaterial) : Effect.fail(new MaterialNotFound({ materialId: id })),
+  renderPages: (id, pages) => id === materialId
+    ? Effect.succeed<MaterialPageImages>({
+        type: "material-page-images",
+        material: fixtureMaterial,
+        pages: pages.map((page) => ({ page, mediaType: "image/png", data: `data:image/png;base64,${onePixelPng}` }))
+      })
+    : Effect.fail(new MaterialNotFound({ materialId: id })),
+  save: () => Effect.die("not used"),
+  remove: () => Effect.die("not used")
+});
+
+const makeInMemoryArtifacts = Effect.gen(function* () {
+  const ref = yield* Ref.make<readonly ArtifactType[]>([]);
+  const repository: ArtifactRepositoryType = {
+    createArtifact: (input) => Effect.gen(function* () {
+      const created = makeArtifact(input);
+      yield* Ref.update(ref, (all) => [...all, created]);
+      return created;
+    }),
+    saveArtifact: (item) => Ref.update(ref, (all) => [...all.filter((other) => other.id !== item.id), item]),
+    getArtifact: (id) => Ref.get(ref).pipe(Effect.flatMap((all) => {
+      const found = all.find((item) => item.id === id);
+      return found === undefined ? Effect.fail(new ArtifactNotFound({ artifactId: id })) : Effect.succeed(found);
+    })),
+    listArtifacts: (input) => Ref.get(ref).pipe(Effect.map((all) => all.filter((item) => input?.kind === undefined || item.kind === input.kind))),
+    submitAttempt: () => Effect.die("not used"),
+    saveAttempt: () => Effect.die("not used"),
+    getAttempt: () => Effect.die("not used"),
+    listAttempts: () => Effect.succeed([]),
+    gradeAttempt: () => Effect.die("not used")
+  };
+  return { repository, ref };
+});
+
+type Step = ReadonlyArray<Response.PartEncoded>;
+
+const text = (content: string): Step => [Response.makePart("text", { text: content })];
+const call = (id: string, input: string): Step => [
+  Response.makePart("tool-call", { id, name: "cli", params: { input }, providerExecuted: false })
+];
+const create = (id: string, input: unknown): Step => call(id, `artifacts create '${JSON.stringify(input)}'`);
+
+const scriptedModel = (steps: readonly Step[], calls: Ref.Ref<number>) =>
+  Layer.effect(
+    LanguageModel.LanguageModel,
+    LanguageModel.make({
+      generateText: () => Effect.gen(function* () {
+        const index = yield* Ref.getAndUpdate(calls, (n) => n + 1);
+        return [...(steps[index] ?? steps[steps.length - 1] ?? [])];
+      }),
+      streamText: () => { throw new Error("not used"); }
+    })
+  );
+
+const runScripted = (input: string, steps: readonly Step[]) => Effect.gen(function* () {
+  const materials = yield* MaterialRepository;
+  const { repository, ref } = yield* makeInMemoryArtifacts;
+  const harness = AgentHarness.make({
+    name: academicTutorSystemPrompt,
+    skills: makeAcademicTutorSkills({ autoDiagram: true, autoExplain: false }),
+    commands: [makeMaterialCommands(materials), makeArtifactCommands(repository, materials)]
+  });
+  const calls = yield* Ref.make(0);
+  const result = yield* AgentSession.make(harness).run({ input, maxSteps: 8 }).pipe(
+    Effect.provide(Layer.mergeAll(harness.layer, scriptedModel(steps, calls)))
+  );
+  return { result, artifacts: yield* Ref.get(ref), modelCalls: yield* Ref.get(calls) };
+});
+
+const toolResults = (messages: ReadonlyArray<{ role: string; result?: unknown }>) =>
+  messages.filter((message) => message.role === "tool-result").map((message) => typeof message.result === "string" ? message.result : JSON.stringify(message.result));
+
+/** The skill's example with the fixture material, as the model would send it. */
+const exampleInput = { ...assessExplanationsExample, source: { materialId, pages: [1, 2, 3] } };
+
+const agentCases = Effect.gen(function* () {
+  const results: CriterionResult[] = [];
+
+  // A. view -> invalid create (labels that are section titles) -> valid create -> answer.
+  const headings = { ...exampleInput, keyPoints: exampleInput.keyPoints.map((point, index) => ({ ...point, label: ["Evaporación", "Condensación", "Precipitación", "Recolección"][index]! })) };
+  const a = yield* runScripted("Quiero explicarte yo el ciclo del agua y que me corrijas.", [
+    call("c1", `materials view ${materialId} 1-3`),
+    create("c2", headings),
+    create("c3", exampleInput),
+    text("Listo: cuatro puntos clave sobre las páginas 1-3. Ábrelo desde el panel y explícamelo con el micro o por escrito.")
+  ]);
+  const aResults = toolResults(a.result.messages);
+  const rejection = aResults.find((item) => item.startsWith("EXPLAIN_INVALID"));
+  const createCalls = a.result.messages.filter((message) => message.role === "tool-call" && JSON.stringify(message.input).includes("artifacts create")).length;
+  const created = a.artifacts[0];
+  results.push(
+    criterion("first-create-rejected-as-outline", rejection !== undefined && rejection.includes("[outline-like]"), rejection?.split("\n")[1] ?? "no rejection"),
+    criterion("second-create-persisted", created?.kind === "explain" && created.keyPoints.length === 4 && a.artifacts.length === 1, `artifacts: ${a.artifacts.length}`),
+    criterion("persisted-keeps-hidden-fields", created?.kind === "explain" && created.keyPoints.every((point) => point.expected.length > 0 && point.mustMention.length > 0), "expected and mustMention stored"),
+    criterion("two-create-calls-only", createCalls === 2 && a.modelCalls === 4, `create calls: ${createCalls}, model calls: ${a.modelCalls}`),
+    criterion("confirmation-has-key-point-count", aResults.some((item) => item.includes("\"keyPointCount\": 4") && item.includes("\"kind\": \"explain\"")), "confirmation carries keyPointCount"),
+    criterion("no-reference-leaks-into-answer", !a.result.output.includes("expected") && !a.result.output.includes(exampleInput.keyPoints[0].expected), a.result.output.slice(0, 80))
+  );
+
+  // B. create without rendering the pages first -> rejected, nothing persisted.
+  const b = yield* runScripted("Ponme a prueba explicando el ciclo del agua.", [
+    create("d1", exampleInput),
+    text("No he podido crearlo.")
+  ]);
+  const bRejection = toolResults(b.result.messages).find((item) => item.startsWith("EXPLAIN_INVALID"));
+  results.push(criterion("create-without-view-rejected", bRejection !== undefined && bRejection.includes("[page-not-rendered]") && b.artifacts.length === 0, bRejection?.split("\n")[1] ?? "no rejection"));
+
+  // C. unknown material -> rejected with a pointer to `materials list`.
+  const c = yield* runScripted("Ponme a prueba.", [
+    create("e1", { ...exampleInput, source: { materialId: "algebra", pages: [1, 2] } }),
+    text("Listo.")
+  ]);
+  const cRejection = toolResults(c.result.messages).find((item) => item.startsWith("EXPLAIN_INVALID"));
+  results.push(criterion("unknown-material-rejected", cRejection !== undefined && cRejection.includes("does not exist") && c.artifacts.length === 0, cRejection?.split("\n")[1] ?? "no rejection"));
+
+  // D. the model sends a single page number and a single term: normalization accepts them.
+  const loose = {
+    ...exampleInput,
+    keyPoints: exampleInput.keyPoints.map((point) => ({ id: point.id, label: point.label, expected: point.expected, mustMention: point.mustMention[0], pages: point.pages[0] }))
+  };
+  const d = yield* runScripted("Ponme a prueba.", [
+    call("f1", `materials view ${materialId} 1-3`),
+    create("f2", loose),
+    text("Listo.")
+  ]);
+  results.push(criterion("normalized-input-persisted", d.artifacts.length === 1 && d.artifacts[0]?.kind === "explain", `artifacts: ${d.artifacts.length}`));
+
+  return results;
+}).pipe(Effect.provide(ScriptedMaterialRepository));
+
+// --- Part 5: skill and UI context ---------------------------------------------------
+
+const plumbingCases = Effect.sync(() => {
+  const results: CriterionResult[] = [];
+
+  const auto = makeAcademicTutorSkills({ autoDiagram: true, autoExplain: true }).find((skill) => skill.name === "assess-explanations");
+  const manual = makeAcademicTutorSkills({ autoDiagram: true }).find((skill) => skill.name === "assess-explanations");
+  results.push(
+    criterion("skill-has-rules-and-repair", auto !== undefined && auto.content.includes("EXPLAIN_INVALID") && auto.content.includes("Never reveal `expected`"), "skill has the hidden-reference rule and the repair rule"),
+    criterion("skill-respects-auto-flag", auto !== undefined && manual !== undefined && auto.content.includes("On your own initiative") && manual.content.includes("## Offer it") && !manual.content.includes("On your own initiative"), "auto flag toggles the initiative section"),
+    criterion("skill-example-is-valid", validateExplain({ ...exampleInput, kind: "explain" }, { pageCount: 3, renderedPages: new Set([1, 2, 3]) }).length === 0, validateExplain({ ...exampleInput, kind: "explain" }, { pageCount: 3, renderedPages: new Set([1, 2, 3]) }).map((issue) => issue.code).join(",") || "no issues"),
+    criterion("skill-example-has-no-single-quotes", auto !== undefined && !/'\{[^\n]*'[^\n]*'/.test(auto.content.split("Example")[1]?.split("## If")[0] ?? "'x'x'"), "example fits inside single quotes")
+  );
+
+  const gradedAttempt: GradedExplainAttempt = {
+    artifactKind: "explain",
+    status: "graded",
+    id: "attempt-1",
+    artifactId: artifact.id,
+    createdAt: "2026-01-02T00:00:00.000Z",
+    answer: { transcript: transcripts.partial, inputMode: "voice" },
+    ...gradeExplain(artifact, { transcript: transcripts.partial, inputMode: "voice" })
+  };
+
+  const before = describeUiContext(artifact, { openQuestionId: "condensacion" });
+  results.push(
+    criterion("context-before-attempt-hides-references", before.includes("no graded attempt yet") && before.includes("Not attempted yet") && !before.includes(artifact.keyPoints[1]!.expected), "no reference in the note"),
+    criterion("context-lists-points-with-status", before.includes("condensacion: \"Qué le pasa al vapor en altura\" (pages 2) — not attempted"), "points listed")
+  );
+
+  const after = describeUiContext(artifact, { openQuestionId: "condensacion", latestAttempt: gradedAttempt });
+  results.push(
+    criterion("context-after-attempt-has-statuses", after.includes("Latest attempt: 1/4 (dictated)") && after.includes("condensacion: partial — Mencionas «nubes», pero falta «se enfría».") && after.includes("precipitacion: missing"), "statuses and feedback in the note"),
+    criterion("context-focused-point-has-reference", after.includes("Focused key point condensacion") && after.includes(artifact.keyPoints[1]!.expected) && after.includes("Required ideas: se enfría|enfriar|frío; nubes"), "reference for the focused, attempted point"),
+    criterion("context-mentions-this-point", after.includes("\"this point\""), "the note maps \"this point\" to the artifact")
+  );
+
+  return results;
+});
+
 // --- Runner --------------------------------------------------------------------------
 
 class ExplainEvalFailed extends Data.TaggedError("ExplainEvalFailed")<{}> {}
@@ -224,10 +423,12 @@ export const explainEval = Effect.gen(function* () {
   const results = [
     ...(yield* validationCases),
     ...(yield* gradingCases),
-    ...(yield* projectionCases)
+    ...(yield* projectionCases),
+    ...(yield* agentCases),
+    ...(yield* plumbingCases)
   ];
 
-  const lines = ["academic-tutor.explain (validation, grading, samples, projection)"];
+  const lines = ["academic-tutor.explain (validation, grading, samples, projection, scripted agent, skill and UI context)"];
   for (const result of results) {
     lines.push(`  ${result.passed ? "✓" : "✗"} ${result.id}: ${result.message}`);
   }

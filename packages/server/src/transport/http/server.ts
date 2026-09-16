@@ -54,7 +54,8 @@ const Routes = Layer.mergeAll(ApiRoutes, DocsRoute, TutorStreamRoute);
 
 const DomainLive = Layer.mergeAll(
   TutorChatServiceLive.pipe(Layer.provide(Layer.succeed(TutorOptions, {
-    autoDiagram: process.env.TUTOR_AUTO_DIAGRAM !== "0"
+    autoDiagram: process.env.TUTOR_AUTO_DIAGRAM !== "0",
+    autoExplain: process.env.TUTOR_AUTO_EXPLAIN === "1"
   }))),
   GeminiModel
 );

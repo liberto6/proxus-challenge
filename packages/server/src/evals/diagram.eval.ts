@@ -555,7 +555,7 @@ const plain = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").to
 const runLive = (testCase: LiveCase) => Effect.gen(function* () {
   const materials = yield* MaterialRepository;
   const { repository, store } = yield* makeInMemoryArtifacts;
-  const harness = makeAcademicTutorHarness(materials, repository, { autoDiagram: true });
+  const harness = makeAcademicTutorHarness(materials, repository, { autoDiagram: true, autoExplain: false });
   const result = yield* AgentSession.make(harness).run({ input: testCase.input, maxSteps: 8 }).pipe(Effect.provide(harness.layer));
   const artifacts = yield* Ref.get(store.ref);
   const diagram = artifacts.find((artifact) => artifact.kind === "diagram");

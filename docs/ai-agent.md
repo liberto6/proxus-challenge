@@ -8,6 +8,7 @@ El tutor ayuda a estudiar usando materiales locales y creando artefactos de apre
 - `quiz`: ejercicio corto, cerrado y autocorregible.
 - `test`: evaluación más completa; puede incluir respuesta corta.
 - `diagram`: resumen visual de un tema (proceso o mapa conceptual) con cada concepto anclado a las páginas que lo explican. Se explora en el panel; no se corrige.
+- `explain`: objetivo de explicación: 3-6 puntos clave que el alumno debe saber explicar con sus palabras, cada uno con una referencia oculta anclada a páginas. El alumno lo explica en el panel (dictado simulado o texto) y se corrige punto por punto.
 
 ## Archivos principales
 
@@ -21,13 +22,14 @@ Skills:
 - `packages/server/src/domain/agents/academic-tutor/skills/use-uploaded-materials.ts`
 - `packages/server/src/domain/agents/academic-tutor/skills/create-study-artifacts.ts`
 - `packages/server/src/domain/agents/academic-tutor/skills/teach-visually.ts`
+- `packages/server/src/domain/agents/academic-tutor/skills/assess-explanations.ts`
 
 Commands:
 
 - `packages/server/src/domain/agents/academic-tutor/material-commands.ts`
 - `packages/server/src/domain/agents/academic-tutor/artifact-commands.ts`
 
-Validación de diagramas: `packages/server/src/domain/artifacts/diagram.ts`.
+Validación de diagramas: `packages/server/src/domain/artifacts/diagram.ts`. Validación, corrección y proyección de objetivos de explicación: `packages/server/src/domain/artifacts/explain.ts`.
 
 ## Modelo mental
 
@@ -52,9 +54,9 @@ materials view <materialId> <pages>
 Artifacts:
 
 ```txt
-artifacts list [note|quiz|test|diagram]
+artifacts list [note|quiz|test|diagram|explain]
 artifacts show <artifactId>
-artifacts create '<json>'          # admite source: { materialId, pages }; los diagramas lo exigen
+artifacts create '<json>'          # admite source: { materialId, pages }; diagramas y objetivos de explicación lo exigen
 artifacts submit '<json>'
 artifacts attempts [artifactId]
 artifacts grade <attemptId>
@@ -90,13 +92,27 @@ Todo diagrama pasa por `validateDiagram` antes de persistirse: ids únicos, lím
 
 Límite conocido: la validación comprueba estructura y anclaje, no que la descripción de cada nodo sea fiel al PDF; eso se mide en el eval en vivo por cobertura de conceptos del fixture.
 
+## Objetivos de explicación: el alumno explica y el sistema corrige
+
+La skill `assess-explanations` fija cuándo y cómo crear un objetivo `explain`:
+
+- Se crea cuando el alumno quiere explicar el tema él mismo ("ponme a prueba", "quiero explicarlo yo") o tras un quiz o un esquema si quiere ir más allá; no para un dato suelto. Con `TUTOR_AUTO_EXPLAIN=1` el tutor lo crea por iniciativa propia tras explicar un proceso o un conjunto de conceptos; con `0` (valor por defecto) solo lo ofrece en una frase y lo crea si el alumno acepta.
+- Cada punto clave lleva un título visible (la idea a explicar, nunca un título de sección), una referencia oculta (`expected`, una a tres frases de las páginas leídas), las ideas imprescindibles (`mustMention`, con sinónimos separados por `|`), frases que delatan una idea equivocada (`contradictions`, opcional) y sus páginas.
+- La skill prohíbe revelar la referencia o las ideas imprescindibles antes de que el alumno tenga un intento corregido de ese punto; después, la nota de contexto de UI le da al tutor el estado por punto, el comentario y, para el punto abierto, la referencia, para que explique lo que faltó desde las páginas.
+
+Todo objetivo pasa por `validateExplain` antes de persistirse: `source` obligatorio, 3-6 puntos, ids únicos, longitudes (`explainLimits` en `shared`), `expected` distinto del título, 1-3 ideas por punto sin repetirse entre puntos, 1-4 páginas por punto dentro de `source.pages`, del rango del material y **leídas en la conversación** (`RenderedPagesRef`, como el diagrama), y rechazo de objetivos hechos de títulos de sección (`outline-like`). Si algo falla, `artifacts create` devuelve `EXPLAIN_INVALID` con todos los problemas y una pista; la skill limita la reparación a dos intentos.
+
+La corrección es determinista y vive en dominio (`gradeExplain`): cada idea imprescindible se busca en la transcripción por palabras, sin acentos y tolerando plurales; el punto queda `covered` (todas), `partial` (alguna), `missing` (ninguna) o `wrong` (aparece una contradicción), con puntuación 1 / 0,5 / 0 / 0, un comentario, los rangos de texto que activaron cada idea (para resaltar en la web) y la referencia solo cuando el punto no se cubrió. `GET /artifacts/:id` devuelve el objetivo sin los campos ocultos (`ArtifactView`). El eval `eval:tutor:explain` cubre validación, normalización, corrección con transcripciones fijas, muestras de dictado, proyección, el bucle de reparación con un modelo guionizado y la nota de contexto, sin llamar a la API.
+
+Límite conocido: la corrección compara ideas por palabras, no por significado; una buena paráfrasis que no use ninguna de las formas declaradas sale como "falta". El tutor lo mitiga con sinónimos en `mustMention`; un juez con rúbrica queda como siguiente paso, con esta corrección como respaldo.
+
 ## Carpetas: el ámbito del tutor
 
 Cada conversación pertenece a una carpeta (General si no se indica). El servicio de chat provee `FolderScope` al turno (`domain/folders/folder.ts`), y los comandos lo aplican en código: `materials list` y `artifacts list` filtran, `materials view` y `artifacts show` rechazan lo que está en otra carpeta sin renderizar nada, `artifacts create` estampa la carpeta. La nota de sistema del turno empieza por `FOLDER: … "Biología" (n material(s))` para que el tutor pueda decir "en esta carpeta" en vez de "no tienes materiales". Sin `FolderScope` (CLI, evals sin carpeta) no se filtra nada. Eval: `eval:folders`.
 
 ## Contexto de la interfaz
 
-La web envía en cada turno qué artefacto tiene abierto el alumno (`context.openArtifactId`, y opcionalmente `openQuestionId` o, en un diagrama, `openNodeId`). El servicio carga el artefacto y añade una nota de sistema solo para ese turno (`academic-tutor/ui-context.ts`), así "explícame la pregunta 2" se entiende sin nombrar el quiz. Al crear un artefacto, el comando devuelve solo una confirmación compacta (id, tipo, título, número de preguntas) y la skill indica responder con un resumen breve sin repetir el contenido: el alumno lo abre desde el panel, donde el chat ofrece un botón "Abrir".
+La web envía en cada turno qué artefacto tiene abierto el alumno (`context.openArtifactId`, y opcionalmente `openQuestionId` o, en un diagrama, `openNodeId`). En un objetivo de explicación, `openQuestionId` es el id del punto clave abierto y el servicio añade además el último intento corregido. El servicio carga el artefacto y añade una nota de sistema solo para ese turno (`academic-tutor/ui-context.ts`), así "explícame la pregunta 2" se entiende sin nombrar el quiz. Al crear un artefacto, el comando devuelve solo una confirmación compacta (id, tipo, título, número de preguntas) y la skill indica responder con un resumen breve sin repetir el contenido: el alumno lo abre desde el panel, donde el chat ofrece un botón "Abrir".
 
 ## Trazas en servidor
 
@@ -115,6 +131,7 @@ Implementación en `packages/server/src/domain/agents/harness/trace.ts`; el eval
 GOOGLE_GENERATIVE_AI_API_KEY=...
 GEMINI_MODEL=gemini-3.5-flash
 TUTOR_AUTO_DIAGRAM=1
+TUTOR_AUTO_EXPLAIN=0
 ```
 
 ## Buenas prácticas al tocar AI
