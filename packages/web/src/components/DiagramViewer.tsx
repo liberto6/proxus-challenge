@@ -5,12 +5,20 @@ import { toMermaid } from "../domain/diagrams/mermaid.ts";
 import { formatPages } from "../lib/format.ts";
 import { Icon } from "./icons.tsx";
 
+/** What a page chip belongs to: a node of the drawing or a card under it. */
+export interface PageSource {
+  readonly label: string;
+  readonly nodeId?: string | undefined;
+}
+
+export type OpenPage = (page: number, source: PageSource) => void;
+
 export interface DiagramViewerProps {
   readonly artifact: DiagramArtifact;
   /** Sends a question about a node to the tutor chat. */
   readonly onAskTutor: (text: string, nodeId: string) => void;
-  /** Opens a page of the source material next to the node; undefined when the material is gone. */
-  readonly onOpenPage?: ((page: number, nodeId: string) => void) | undefined;
+  /** Opens a page of the source material next to the node or card; undefined when the material is gone. */
+  readonly onOpenPage?: OpenPage | undefined;
   /** Page currently previewed, to mark its chip. */
   readonly openPage?: number | undefined;
 }
@@ -34,6 +42,10 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
   const [mode, setMode] = useState<ViewMode>("diagram");
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [kindFilter, setKindFilter] = useState<DiagramNodeKind | undefined>();
+  const [viewIndex, setViewIndex] = useState<number | undefined>();
+  const views = artifact.views ?? [];
+  const activeView = viewIndex === undefined ? undefined : views[viewIndex];
+  const viewFocus = useMemo(() => new Set(activeView?.focus ?? []), [activeView]);
   const [viewBox, setViewBox] = useState<ViewBox>(() => fullView(layout));
   const [copied, setCopied] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -54,6 +66,8 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
   useEffect(() => {
     setViewBox(fullView(layout));
     setSelectedId(undefined);
+    setViewIndex(undefined);
+    setKindFilter(undefined);
   }, [layout]);
 
   // Wheel zoom must cancel the page scroll, which React's passive onWheel cannot do.
@@ -210,7 +224,11 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                     <EdgeShape
                       key={edge.id}
                       edge={edge}
-                      state={selectedId === undefined ? "normal" : edge.from === selectedId || edge.to === selectedId ? "lit" : "dim"}
+                      state={selectedId !== undefined
+                        ? edge.from === selectedId || edge.to === selectedId ? "lit" : "dim"
+                        : activeView !== undefined
+                          ? viewFocus.has(edge.from) && viewFocus.has(edge.to) ? "lit" : "dim"
+                          : "normal"}
                     />
                   ))}
                   {layout.nodes.map((box) => {
@@ -219,7 +237,9 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                     const kind = kindOf(node);
                     const state: NodeState = selectedId !== undefined
                       ? box.id === selectedId ? "selected" : neighbours.has(box.id) ? "lit" : "dim"
-                      : kindFilter !== undefined && kind !== kindFilter ? "dim" : "normal";
+                      : activeView !== undefined
+                        ? viewFocus.has(box.id) ? "lit" : "dim"
+                        : kindFilter !== undefined && kind !== kindFilter ? "dim" : "normal";
                     return (
                       <NodeShape
                         key={box.id}
@@ -234,6 +254,24 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                 </svg>
               </div>
 
+              {views.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Vistas guiadas">
+                  <span className="font-extrabold text-ink-muted text-xs uppercase tracking-wider">Ver:</span>
+                  {views.map((view, index) => (
+                    <button
+                      key={index}
+                      type="button"
+                      className={`btn btn-sm ${viewIndex === index ? "btn-secondary" : "btn-ghost"}`}
+                      aria-pressed={viewIndex === index}
+                      onClick={() => { setViewIndex((current) => current === index ? undefined : index); select(undefined); setKindFilter(undefined); }}
+                    >
+                      {view.label}
+                    </button>
+                  ))}
+                  {activeView?.note !== undefined && <span className="basis-full font-semibold text-ink-muted text-sm">{activeView.note}</span>}
+                </div>
+              )}
+
               {legend.length > 1 && (
                 <ul className="flex flex-wrap gap-1.5" aria-label="Leyenda de tipos de concepto">
                   {legend.map(([kind, count]) => (
@@ -243,7 +281,7 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                         className={`badge cursor-pointer hover:border-ink ${kindFilter === kind ? "badge-sun" : "badge-neutral"}`}
                         aria-pressed={kindFilter === kind}
                         title={kindFilter === kind ? "Quitar el filtro" : `Ver solo: ${kindLabels[kind]}`}
-                        onClick={() => { setKindFilter((current) => current === kind ? undefined : kind); select(undefined); }}
+                        onClick={() => { setKindFilter((current) => current === kind ? undefined : kind); select(undefined); setViewIndex(undefined); }}
                       >
                         <span className="inline-block size-2.5 rounded-sm border border-ink" style={{ background: kindStyles[kind].fill }} aria-hidden="true" />
                         {kindLabels[kind]} · {count}
@@ -268,6 +306,8 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                   )}
             </>
           )}
+
+      <DiagramCards artifact={artifact} openPage={openPage} onOpenPage={onOpenPage} />
     </div>
   );
 }
@@ -473,7 +513,7 @@ function NodeCard({ artifact, node, openPage, onFollow, onOpenPage, onAskTutor, 
   readonly node: DiagramNode;
   readonly openPage: number | undefined;
   readonly onFollow: (id: string) => void;
-  readonly onOpenPage: ((page: number, nodeId: string) => void) | undefined;
+  readonly onOpenPage: OpenPage | undefined;
   readonly onAskTutor: (text: string, nodeId: string) => void;
   readonly onClose: () => void;
 }) {
@@ -517,10 +557,19 @@ function NodeCard({ artifact, node, openPage, onFollow, onOpenPage, onAskTutor, 
 function PageChips({ node, openPage, onOpenPage }: {
   readonly node: DiagramNode;
   readonly openPage: number | undefined;
-  readonly onOpenPage: ((page: number, nodeId: string) => void) | undefined;
+  readonly onOpenPage: OpenPage | undefined;
 }) {
-  if (node.pages.length === 0) return null;
-  const pages = [...node.pages].sort((a, b) => a - b);
+  return <PageChipRow pages={node.pages} source={{ label: node.label, nodeId: node.id }} openPage={openPage} onOpenPage={onOpenPage} />;
+}
+
+function PageChipRow({ pages: rawPages, source, openPage, onOpenPage }: {
+  readonly pages: readonly number[];
+  readonly source: PageSource;
+  readonly openPage: number | undefined;
+  readonly onOpenPage: OpenPage | undefined;
+}) {
+  if (rawPages.length === 0) return null;
+  const pages = [...rawPages].sort((a, b) => a - b);
   return (
     <div className="flex flex-wrap items-center gap-1.5" aria-label="Páginas del material">
       {onOpenPage === undefined
@@ -530,7 +579,7 @@ function PageChips({ node, openPage, onOpenPage }: {
               key={page}
               className={`badge ${openPage === page ? "badge-sun" : "badge-neutral"} cursor-pointer hover:border-ink`}
               type="button"
-              onClick={() => onOpenPage(page, node.id)}
+              onClick={() => onOpenPage(page, source)}
               aria-pressed={openPage === page}
               title={`Ver la página ${page} del material`}
             >
@@ -550,7 +599,7 @@ function PageChips({ node, openPage, onOpenPage }: {
 export function DiagramList({ artifact, onAskTutor, onOpenPage }: {
   readonly artifact: DiagramArtifact;
   readonly onAskTutor: (text: string, nodeId: string) => void;
-  readonly onOpenPage?: ((page: number, nodeId: string) => void) | undefined;
+  readonly onOpenPage?: OpenPage | undefined;
 }) {
   const sections = readingOrder(artifact);
   return (
@@ -607,6 +656,34 @@ export function NodeRelations({ artifact, node }: { readonly artifact: DiagramAr
         </li>
       ))}
     </ul>
+  );
+}
+
+// --- Cards --------------------------------------------------------------------------
+
+/**
+ * What does not fit in boxes: key points, definitions and formulas, dates.
+ * Each card cites the pages its items come from.
+ */
+export function DiagramCards({ artifact, openPage, onOpenPage }: {
+  readonly artifact: DiagramArtifact;
+  readonly openPage: number | undefined;
+  readonly onOpenPage: OpenPage | undefined;
+}) {
+  const cards = artifact.cards ?? [];
+  if (cards.length === 0) return null;
+  return (
+    <div className="grid gap-3 md:grid-cols-2" aria-label="Lo esencial">
+      {cards.map((card, index) => (
+        <section key={index} className="card-flat flex flex-col gap-2 p-3.5">
+          <h4 className="font-display font-semibold text-base leading-tight">{card.title}</h4>
+          <ul className="flex list-disc flex-col gap-1 pl-4 font-semibold text-[14px] leading-snug">
+            {card.items.map((item, itemIndex) => <li key={itemIndex}>{item}</li>)}
+          </ul>
+          <PageChipRow pages={card.pages} source={{ label: card.title }} openPage={openPage} onOpenPage={onOpenPage} />
+        </section>
+      ))}
+    </div>
   );
 }
 

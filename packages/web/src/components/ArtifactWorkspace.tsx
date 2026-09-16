@@ -13,7 +13,7 @@ import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactQuery, submitArtifactAttemptAction } from "../domain/artifacts/atoms.ts";
 import { materialPageKey, materialPageQuery, materialsQuery } from "../domain/materials/atoms.ts";
 import { formatPages, pluralize } from "../lib/format.ts";
-import { DiagramViewer } from "./DiagramViewer.tsx";
+import { DiagramViewer, type PageSource } from "./DiagramViewer.tsx";
 import { Icon, KindIcon, kindLabel } from "./icons.tsx";
 
 type Answers = Record<string, string>;
@@ -120,15 +120,14 @@ function DiagramPanel({ artifact, onAskTutor }: {
   readonly onAskTutor: (text: string, context?: { readonly nodeId: string }) => void;
 }) {
   const materials = useAtomValue(materialsQuery);
-  const [preview, setPreview] = useState<{ readonly page: number; readonly nodeId: string } | undefined>();
+  const [preview, setPreview] = useState<{ readonly page: number; readonly source: PageSource } | undefined>();
   const materialId = artifact.source?.materialId;
   // Pages can be previewed while the source material still exists.
   const materialAvailable = materialId !== undefined
     && (!AsyncResult.isSuccess(materials) || materials.value.materials.some((material) => material.id === materialId));
   const openPage = materialAvailable
-    ? (page: number, nodeId: string) => setPreview((current) => current?.page === page && current.nodeId === nodeId ? undefined : { page, nodeId })
+    ? (page: number, source: PageSource) => setPreview((current) => current?.page === page && current.source.label === source.label ? undefined : { page, source })
     : undefined;
-  const previewedNode = preview === undefined ? undefined : artifact.nodes.find((node) => node.id === preview.nodeId);
 
   return (
     <div className="flex min-h-0 flex-col gap-4 overflow-y-auto p-5">
@@ -144,13 +143,16 @@ function DiagramPanel({ artifact, onAskTutor }: {
         onOpenPage={openPage}
         openPage={preview?.page}
       />
-      {preview !== undefined && materialId !== undefined && previewedNode !== undefined && (
+      {preview !== undefined && materialId !== undefined && (
         <PagePreview
           materialId={materialId}
           page={preview.page}
-          nodeLabel={previewedNode.label}
+          nodeLabel={preview.source.label}
           onClose={() => setPreview(undefined)}
-          onAsk={() => onAskTutor(`¿Qué dice la página ${preview.page} sobre «${previewedNode.label}»?`, { nodeId: previewedNode.id })}
+          onAsk={() => onAskTutor(
+            `¿Qué dice la página ${preview.page} sobre «${preview.source.label}»?`,
+            preview.source.nodeId === undefined ? undefined : { nodeId: preview.source.nodeId }
+          )}
         />
       )}
     </div>
