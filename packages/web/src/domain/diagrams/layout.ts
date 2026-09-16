@@ -12,13 +12,14 @@ import type { DiagramArtifact } from "@proxus/shared";
  *   ignoring edge direction), children under their parents.
  */
 
-export const NODE_WIDTH = 150;
-export const NODE_HEIGHT = 56;
-const PADDING = 28;
-const COLUMN_GAP = 64;
-const ROW_GAP = 72;
-const SIDE_GAP = 88;
-const RING_MIN_RADIUS = 170;
+// Two zones per box: the label and a one-line sublabel.
+export const NODE_WIDTH = 190;
+export const NODE_HEIGHT = 72;
+const PADDING = 32;
+const COLUMN_GAP = 72;
+const ROW_GAP = 84;
+const SIDE_GAP = 96;
+const RING_MIN_RADIUS = 210;
 
 export type NodeRole = "step" | "side" | "root" | "concept";
 export type EdgeKind = "main" | "side" | "relation";
@@ -112,7 +113,10 @@ const ring = (artifact: DiagramArtifact, path: readonly string[], allEdges: Diag
     const angle = angleOf(path.indexOf(target));
     const outward = { x: Math.cos(angle), y: Math.sin(angle) };
     const tangent = { x: -Math.sin(angle), y: Math.cos(angle) };
-    const distance = radius + NODE_HEIGHT + SIDE_GAP;
+    // Far enough that the boxes do not touch whatever the direction: a box beside a
+    // step needs a full width of clearance, one above it only a height.
+    const clearance = Math.abs(outward.x) * NODE_WIDTH + Math.abs(outward.y) * NODE_HEIGHT;
+    const distance = radius + clearance + SIDE_GAP / 2;
     sides.forEach((id, index) => {
       const offset = (index - (sides.length - 1) / 2) * (NODE_WIDTH + 24);
       placed.push({
@@ -342,11 +346,15 @@ const layered = (artifact: DiagramArtifact, edges: DiagramArtifact["edges"]): Di
         labelY: label.y
       };
     }
-    // Same row or a skipped level: a curve bulging sideways so it does not cross the rows.
-    const control = {
-      x: (fromCenter.x + toCenter.x) / 2 + (fromCenter.x <= toCenter.x ? 1 : -1) * (NODE_WIDTH / 2 + COLUMN_GAP),
-      y: (fromCenter.y + toCenter.y) / 2
-    };
+    // Same row: a curve dipping below the row. A skipped level: a curve bulging
+    // sideways so it does not run through the rows in between.
+    const sameRow = (depth.get(edge.from) ?? 0) === (depth.get(edge.to) ?? 0);
+    const control = sameRow
+      ? { x: (fromCenter.x + toCenter.x) / 2, y: fromCenter.y + NODE_HEIGHT + 36 }
+      : {
+          x: (fromCenter.x + toCenter.x) / 2 + (fromCenter.x <= toCenter.x ? 1 : -1) * (NODE_WIDTH / 2 + COLUMN_GAP),
+          y: (fromCenter.y + toCenter.y) / 2
+        };
     const start = clipToRect(fromCenter, control, from);
     const end = clipToRect(toCenter, control, to);
     const mid = quadraticPoint(start, control, end, 0.5);

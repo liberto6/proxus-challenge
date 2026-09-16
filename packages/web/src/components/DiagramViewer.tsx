@@ -1,4 +1,4 @@
-import type { DiagramArtifact, DiagramNode } from "@proxus/shared";
+import type { DiagramArtifact, DiagramNode, DiagramNodeKind } from "@proxus/shared";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { layoutDiagram, splitTransitions, type DiagramLayout, type LayoutEdge, type LayoutNode } from "../domain/diagrams/layout.ts";
 import { toMermaid } from "../domain/diagrams/mermaid.ts";
@@ -33,14 +33,28 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
   const layout = useMemo(() => layoutDiagram(artifact), [artifact]);
   const [mode, setMode] = useState<ViewMode>("diagram");
   const [selectedId, setSelectedId] = useState<string | undefined>();
+  const [kindFilter, setKindFilter] = useState<DiagramNodeKind | undefined>();
   const [viewBox, setViewBox] = useState<ViewBox>(() => fullView(layout));
   const [copied, setCopied] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
   const drag = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | undefined>(undefined);
 
   const nodesById = useMemo(() => new Map(artifact.nodes.map((node) => [node.id, node])), [artifact]);
+  const kindOf = (node: DiagramNode): DiagramNodeKind => node.kind ?? (artifact.mainPath?.includes(node.id) ? "step" : "concept");
+  const legend = useMemo(() => {
+    const counts = new Map<DiagramNodeKind, number>();
+    for (const node of artifact.nodes) counts.set(kindOf(node), (counts.get(kindOf(node)) ?? 0) + 1);
+    return [...counts.entries()];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [artifact]);
   const selected = selectedId === undefined ? undefined : nodesById.get(selectedId);
   const neighbours = useMemo(() => selectedId === undefined ? new Set<string>() : new Set(relationsOf(artifact, selectedId).map((relation) => relation.other)), [artifact, selectedId]);
+
+  // A new drawing (another artifact, or an edited one) starts fitted.
+  useEffect(() => {
+    setViewBox(fullView(layout));
+    setSelectedId(undefined);
+  }, [layout]);
 
   // Wheel zoom must cancel the page scroll, which React's passive onWheel cannot do.
   useEffect(() => {
@@ -202,18 +216,42 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                   {layout.nodes.map((box) => {
                     const node = nodesById.get(box.id);
                     if (node === undefined) return null;
+                    const kind = kindOf(node);
+                    const state: NodeState = selectedId !== undefined
+                      ? box.id === selectedId ? "selected" : neighbours.has(box.id) ? "lit" : "dim"
+                      : kindFilter !== undefined && kind !== kindFilter ? "dim" : "normal";
                     return (
                       <NodeShape
                         key={box.id}
                         box={box}
                         node={node}
-                        state={selectedId === undefined ? "normal" : box.id === selectedId ? "selected" : neighbours.has(box.id) ? "lit" : "dim"}
+                        kind={kind}
+                        state={state}
                         onSelect={() => select(box.id === selectedId ? undefined : box.id)}
                       />
                     );
                   })}
                 </svg>
               </div>
+
+              {legend.length > 1 && (
+                <ul className="flex flex-wrap gap-1.5" aria-label="Leyenda de tipos de concepto">
+                  {legend.map(([kind, count]) => (
+                    <li key={kind}>
+                      <button
+                        type="button"
+                        className={`badge cursor-pointer hover:border-ink ${kindFilter === kind ? "badge-sun" : "badge-neutral"}`}
+                        aria-pressed={kindFilter === kind}
+                        title={kindFilter === kind ? "Quitar el filtro" : `Ver solo: ${kindLabels[kind]}`}
+                        onClick={() => { setKindFilter((current) => current === kind ? undefined : kind); select(undefined); }}
+                      >
+                        <span className="inline-block size-2.5 rounded-sm border border-ink" style={{ background: kindStyles[kind].fill }} aria-hidden="true" />
+                        {kindLabels[kind]} · {count}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
 
               {selected === undefined
                 ? <p className="font-semibold text-ink-subtle text-sm">Toca un concepto para ver su explicación, sus páginas y sus relaciones.</p>
@@ -241,24 +279,83 @@ const palette = {
   ink: "#1f1b2d",
   inkMuted: "#5b5670",
   paper: "#ffffff",
+  surface2: "#fff4e0",
   lilaSoft: "#eeebff",
   lilaInk: "#4b3db8",
   sunSoft: "#fff1c2",
-  sun: "#ffc94d"
+  sun: "#ffc94d",
+  mintSoft: "#ddf7ec",
+  coralSoft: "#ffe4dc",
+  rosaSoft: "#ffe1e7"
 } as const;
+
+/** One look per kind: fill, outline style and box shape. */
+const kindStyles: Record<DiagramNodeKind, { readonly fill: string; readonly shape: "box" | "pill" | "cut" | "double" | "dotted"; readonly mono?: boolean }> = {
+  step: { fill: palette.lilaSoft, shape: "box" },
+  concept: { fill: palette.paper, shape: "box" },
+  agent: { fill: palette.mintSoft, shape: "pill" },
+  condition: { fill: palette.coralSoft, shape: "cut" },
+  quantity: { fill: palette.sunSoft, shape: "box" },
+  formula: { fill: palette.surface2, shape: "box", mono: true },
+  definition: { fill: palette.paper, shape: "double" },
+  example: { fill: palette.paper, shape: "dotted" }
+};
+
+export const kindLabels: Record<DiagramNodeKind, string> = {
+  step: "Paso",
+  concept: "Concepto",
+  agent: "Agente",
+  condition: "Condición",
+  quantity: "Magnitud",
+  formula: "Fórmula",
+  definition: "Definición",
+  example: "Ejemplo"
+};
 
 type NodeState = "normal" | "selected" | "lit" | "dim";
 
-function NodeShape({ box, node, state, onSelect }: {
+/** Outline of a box for its shape, as SVG path data. */
+const shapePath = (box: LayoutNode, shape: "box" | "pill" | "cut" | "double" | "dotted"): string => {
+  const { x, y, width: w, height: h } = box;
+  if (shape === "pill") {
+    const r = h / 2;
+    return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
+  }
+  if (shape === "cut") {
+    const c = 14;
+    return `M ${x + c} ${y} H ${x + w - c} L ${x + w} ${y + h / 2} L ${x + w - c} ${y + h} H ${x + c} L ${x} ${y + h / 2} Z`;
+  }
+  const r = 10;
+  return `M ${x + r} ${y} H ${x + w - r} A ${r} ${r} 0 0 1 ${x + w} ${y + r} V ${y + h - r} A ${r} ${r} 0 0 1 ${x + w - r} ${y + h} H ${x + r} A ${r} ${r} 0 0 1 ${x} ${y + h - r} V ${y + r} A ${r} ${r} 0 0 1 ${x + r} ${y} Z`;
+};
+
+function NodeShape({ box, node, kind, state, onSelect }: {
   readonly box: LayoutNode;
   readonly node: DiagramNode;
+  readonly kind: DiagramNodeKind;
   readonly state: NodeState;
   readonly onSelect: () => void;
 }) {
-  const fill = box.role === "step" ? palette.lilaSoft : box.role === "root" ? palette.sunSoft : palette.paper;
-  const lines = wrapLabel(node.label);
-  const lineHeight = 15;
-  const firstY = box.y + box.height / 2 - ((lines.length - 1) * lineHeight) / 2 + 5;
+  const style = kindStyles[kind];
+  const fill = box.role === "root" ? palette.sunSoft : style.fill;
+  const outline = shapePath(box, style.shape);
+  const labelLines = wrapText(node.label, style.shape === "cut" ? 18 : 24, 2);
+  const detail = style.mono && node.formula !== undefined ? node.formula : node.sublabel;
+  const detailLines = detail === undefined ? [] : wrapText(detail, style.shape === "cut" ? 24 : 32, labelLines.length > 1 ? 1 : 2);
+  const labelHeight = 15;
+  const detailHeight = 13;
+  const total = labelLines.length * labelHeight + detailLines.length * detailHeight + (detailLines.length > 0 ? 4 : 0);
+  let cursor = box.y + (box.height - total) / 2 + 11;
+  const texts: Array<{ readonly text: string; readonly y: number; readonly detail: boolean }> = [];
+  for (const line of labelLines) {
+    texts.push({ text: line, y: cursor, detail: false });
+    cursor += labelHeight;
+  }
+  cursor += detailLines.length > 0 ? 4 : 0;
+  for (const line of detailLines) {
+    texts.push({ text: line, y: cursor, detail: true });
+    cursor += detailHeight;
+  }
   return (
     <g
       role="button"
@@ -277,34 +374,36 @@ function NodeShape({ box, node, state, onSelect }: {
         }
       }}
     >
-      <rect x={box.x + 3} y={box.y + 3} width={box.width} height={box.height} rx={10} fill={palette.ink} />
-      <rect
-        x={box.x}
-        y={box.y}
-        width={box.width}
-        height={box.height}
-        rx={10}
+      <path d={outline} transform="translate(3 3)" fill={palette.ink} />
+      <path
+        d={outline}
         fill={fill}
         stroke={state === "selected" ? palette.sun : palette.ink}
         strokeWidth={state === "selected" ? 4 : 2}
+        strokeDasharray={style.shape === "dotted" ? "2 4" : undefined}
+        strokeLinejoin="round"
       />
+      {style.shape === "double" && (
+        <rect x={box.x + 5} y={box.y + 5} width={box.width - 10} height={box.height - 10} rx={7} fill="none" stroke={palette.ink} strokeWidth={1} />
+      )}
       {box.step !== undefined && (
         <>
           <circle cx={box.x + 2} cy={box.y + 2} r={11} fill={palette.sun} stroke={palette.ink} strokeWidth={2} />
           <text x={box.x + 2} y={box.y + 6} textAnchor="middle" fontSize={11} fontWeight={800} fill={palette.ink}>{box.step}</text>
         </>
       )}
-      {lines.map((line, index) => (
+      {texts.map((line, index) => (
         <text
           key={index}
           x={box.x + box.width / 2}
-          y={firstY + index * lineHeight}
+          y={line.y}
           textAnchor="middle"
-          fontSize={13}
-          fontWeight={800}
-          fill={palette.ink}
+          fontSize={line.detail ? 11 : 13}
+          fontWeight={line.detail ? 600 : 800}
+          fontFamily={line.detail && style.mono ? "ui-monospace, Consolas, monospace" : undefined}
+          fill={line.detail ? palette.inkMuted : palette.ink}
         >
-          {line}
+          {line.text}
         </text>
       ))}
     </g>
@@ -330,7 +429,8 @@ function EdgeShape({ edge, state }: { readonly edge: LayoutEdge; readonly state:
           x={edge.labelX}
           y={edge.labelY + 4}
           textAnchor="middle"
-          fontSize={11}
+          fontSize={edge.kind === "main" ? 12 : 11}
+          fontStyle={edge.kind === "main" ? "italic" : undefined}
           fontWeight={700}
           fill={palette.inkMuted}
           stroke={palette.paper}
@@ -345,11 +445,10 @@ function EdgeShape({ edge, state }: { readonly edge: LayoutEdge; readonly state:
   );
 }
 
-/** Splits a label into at most two lines that fit a 150 px box at 13 px bold. */
-const wrapLabel = (label: string): readonly string[] => {
-  const maxChars = 19;
-  if (label.length <= maxChars) return [label];
-  const words = label.split(/\s+/);
+/** Splits text into at most `maxLines` lines of about `maxChars` characters; the last line is cut with an ellipsis. */
+const wrapText = (text: string, maxChars: number, maxLines: number): readonly string[] => {
+  if (text.length <= maxChars) return [text];
+  const words = text.split(/\s+/);
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
@@ -362,9 +461,9 @@ const wrapLabel = (label: string): readonly string[] => {
     }
   }
   if (current.length > 0) lines.push(current);
-  if (lines.length <= 2) return lines;
-  const second = lines.slice(1).join(" ");
-  return [lines[0]!, second.length > maxChars ? `${second.slice(0, maxChars - 1)}…` : second];
+  if (lines.length <= maxLines) return lines;
+  const rest = lines.slice(maxLines - 1).join(" ");
+  return [...lines.slice(0, maxLines - 1), rest.length > maxChars ? `${rest.slice(0, maxChars - 1).trimEnd()}…` : rest];
 };
 
 // --- Node card ---------------------------------------------------------------------
@@ -383,9 +482,14 @@ function NodeCard({ artifact, node, openPage, onFollow, onOpenPage, onAskTutor, 
   return (
     <section className="card flex flex-col gap-2.5 p-4" aria-label={`Concepto: ${node.label}`} aria-live="polite">
       <div className="flex items-start justify-between gap-2">
-        <h4 className="font-display font-semibold text-lg leading-tight">{node.label}</h4>
+        <div className="min-w-0">
+          <p className="font-extrabold text-lila-ink text-xs uppercase tracking-wider">{kindLabels[node.kind ?? (artifact.mainPath?.includes(node.id) ? "step" : "concept")]}</p>
+          <h4 className="font-display font-semibold text-lg leading-tight">{node.label}</h4>
+          {node.sublabel !== undefined && <p className="font-semibold text-ink-muted text-sm">{node.sublabel}</p>}
+        </div>
         <button className="icon-btn text-ink" type="button" onClick={onClose} aria-label="Cerrar la ficha del concepto"><Icon name="close" size={14} strokeWidth={2.4} /></button>
       </div>
+      {node.formula !== undefined && <code className="rounded-sm border-2 border-line bg-surface-2 px-2 py-1 font-mono text-[13px]">{node.formula}</code>}
       <p className="font-semibold text-[15px] leading-snug">{node.description}</p>
       <PageChips node={node} openPage={openPage} onOpenPage={onOpenPage} />
       {relations.length > 0 && (
@@ -461,8 +565,12 @@ export function DiagramList({ artifact, onAskTutor, onOpenPage }: {
                   {section.numbered && (
                     <span className="grid size-6 shrink-0 place-items-center rounded-full border-2 border-ink bg-lila-soft font-extrabold text-[12px]">{index + 1}</span>
                   )}
-                  <h5 className="min-w-0 flex-1 font-extrabold text-[15px] leading-snug">{node.label}</h5>
+                  <div className="min-w-0 flex-1">
+                    <h5 className="font-extrabold text-[15px] leading-snug">{node.label}</h5>
+                    {node.sublabel !== undefined && <p className="font-semibold text-ink-muted text-sm">{node.sublabel}</p>}
+                  </div>
                 </div>
+                {node.formula !== undefined && <code className="self-start rounded-sm border-2 border-line bg-surface-2 px-2 py-1 font-mono text-[13px]">{node.formula}</code>}
                 <p className="font-semibold text-ink-muted text-sm">{node.description}</p>
                 <NodeRelations artifact={artifact} node={node} />
                 <div className="flex flex-wrap items-center gap-2">

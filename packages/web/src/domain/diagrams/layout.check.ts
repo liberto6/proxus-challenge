@@ -159,6 +159,17 @@ results.push(
   criterion("mermaid-does-not-double-transitions", (toMermaid(labelledCycle).match(/-->/g) ?? []).length === 6 && toMermaid(labelledCycle).includes('evaporacion -- "el vapor se enfría en altura" --> condensacion'), `${(toMermaid(labelledCycle).match(/-->/g) ?? []).length} arrows`)
 );
 
+// One side concept beside a step on the right of the ring must not touch it.
+const oneSide: DiagramArtifact = { ...cycle, id: "one-side", nodes: cycle.nodes.filter((item) => item.id !== "sublimacion"), edges: [cycle.edges[0]!] };
+const oneSideLayout = layoutDiagram(oneSide);
+results.push(criterion("cycle.single-side-node-clears-its-step", overlaps(oneSideLayout).length === 0, overlaps(oneSideLayout).join(",") || "no overlap"));
+
+// A relation between two concepts of the same row dips below them instead of running through the row.
+const sameRowLayout = layoutDiagram({ ...conceptMap, edges: [...conceptMap.edges, { from: "escorrentia", to: "infiltracion", label: "compite con" }] });
+const sameRowEdge = sameRowLayout.edges.find((edge) => edge.from === "escorrentia" && edge.to === "infiltracion");
+const rowY = sameRowLayout.nodes.find((box) => box.id === "escorrentia")?.y ?? 0;
+results.push(criterion("map.same-row-edge-dips-below", sameRowEdge !== undefined && sameRowEdge.path.includes(" Q ") && sameRowEdge.labelY > rowY + 72, `label y ${sameRowEdge?.labelY} vs row y ${rowY}`));
+
 const mermaid = toMermaid(cycle);
 results.push(
   criterion("mermaid-export-counts", mermaid.startsWith("flowchart TD") && (mermaid.match(/-->/g) ?? []).length === 6 && mermaidEdgeCount(cycle) === 6 && mermaid.includes("recoleccion --> evaporacion") && mermaid.includes('-- "aporta vapor" -->'), `${(mermaid.match(/-->/g) ?? []).length} arrows`)
