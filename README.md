@@ -1,6 +1,6 @@
 # Proxus Product Engineer Challenge
 
-Template de inicio para explorar un caso fullstack + AI inspirado en Proxus: un tutor académico que usa materiales PDF, crea artefactos de estudio (notas, quizzes, tests y esquemas anclados a las páginas) y permite resolver quizzes/tests y explorar esquemas desde una UI web.
+Template de inicio para explorar un caso fullstack + AI inspirado en Proxus: un tutor académico que usa materiales PDF, crea artefactos de estudio (notas, quizzes, tests, esquemas y objetivos de explicación anclados a las páginas) y permite resolver quizzes/tests, explorar esquemas y explicar un tema con las propias palabras para que se corrija punto por punto desde una UI web.
 
 El objetivo del repo no es ser una app cerrada, sino una base razonable para que una persona candidata pueda demostrar criterio de producto, arquitectura fullstack y uso pragmático de AI.
 
@@ -93,6 +93,7 @@ pnpm --filter @proxus/server run eval:tutor:grounding
 pnpm --filter @proxus/server run eval:tutor:sessions
 pnpm --filter @proxus/server run eval:materials
 pnpm --filter @proxus/server run eval:tutor:diagram
+pnpm --filter @proxus/server run eval:tutor:explain
 pnpm --filter @proxus/server run eval:folders
 pnpm --filter @proxus/web run check:layout
 
@@ -113,6 +114,7 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
    - pide un quiz sobre esas páginas y ábrelo desde el botón que aparece en el chat,
    - resuélvelo, revisa las correcciones y pregúntale al tutor por una pregunta con el quiz abierto,
    - pide que te explique las fases del ciclo: el tutor decide dibujar un esquema; ábrelo, toca un concepto, salta a la página que lo explica y pregúntale por él,
+   - di «quiero explicártelo yo»: el tutor fija los puntos clave que debes cubrir (sin mostrarte la solución); en el panel, graba (dictado simulado en este prototipo) o escribe tu explicación y corrígela: cada punto queda cubierto, a medias, falta o incorrecto, con lo esperado en los que no cubriste y la página que lo explica; pregúntale al tutor por un punto y repite,
    - recarga la página: la carpeta y la conversación se conservan; las conversaciones de la carpeta se listan y se reabren desde la barra.
 6. Si necesitas más detalle sobre storage local, sigue [`docs/data.md`](./docs/data.md); no subas `.data`.
 7. Las decisiones que explican el diseño actual están en [`docs/decisions.md`](./docs/decisions.md).
@@ -123,6 +125,8 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 - La guardia de anclaje solo detecta citas explícitas de página ("página 2", "págs. 1-3"); una afirmación inventada sin número de página no se detecta.
 - Los esquemas se validan en estructura, contenido mínimo y anclaje (ids, aristas, subetiquetas, causas, tarjetas, páginas leídas), no en la fidelidad de cada texto al PDF; el layout propio no minimiza cruces y se limita a 16 conceptos.
 - La corrección de respuesta corta compara texto normalizado, no significado.
+- Los objetivos de explicación se corrigen por cobertura de ideas (palabras sin acentos, con plurales y los sinónimos que declara el tutor), no por significado: una buena paráfrasis que no use ninguna de las formas declaradas sale como «falta». Un juez con rúbrica queda como siguiente paso; esta corrección sería su respaldo.
+- El dictado es simulado: el micro reproduce una muestra generada en el servidor a partir de las soluciones (buena / a medias / floja) en lugar de reconocer la voz. El hook tiene la interfaz que tendría uno real; el endpoint de muestras es de demostración y expone las soluciones a quien lo llame.
 - La ruta de streaming del chat es manual (fuera de Effect HTTP API), como en la base original.
 - Con la cuota gratuita de Gemini, un turno con lectura de páginas consume 3 o 4 peticiones; ante cuota diaria agotada el tutor lo dice y no reintenta.
 - Sin multiusuario: carpetas, sesiones, materiales y artefactos son ficheros locales sin propietario.

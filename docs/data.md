@@ -53,6 +53,7 @@ Kinds:
 - `quiz`
 - `test`
 - `diagram` (sin intentos; sus nodos citan páginas del material de `source`)
+- `explain` (puntos clave con solución oculta; sus intentos guardan la transcripción y la corrección por punto)
 
 Attempts:
 

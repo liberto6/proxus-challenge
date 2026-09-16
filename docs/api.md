@@ -66,11 +66,13 @@ La subida valida cabecera PDF y que Poppler pueda leerlo (400 si no). El id se d
 
 ```http
 GET /api/artifacts/             # ?kind= y ?folderId= filtran
-GET /api/artifacts/:id
+GET /api/artifacts/:id                    # devuelve ArtifactView: un objetivo de explicación sin sus soluciones
 POST /api/artifacts/:id/submit
+GET /api/artifacts/:id/attempts           # intentos del artefacto
+GET /api/artifacts/:id/dictation-samples  # prototipo: muestras para el dictado simulado (solo `explain`; 404 si no)
 ```
 
-`submit` crea y corrige un intento, devolviendo un attempt con estado `graded` cuando aplica.
+`submit` crea y corrige un intento, devolviendo un attempt con estado `graded` cuando aplica. Para `explain` el payload es `{ "artifactKind": "explain", "artifactId", "answer": { "transcript", "inputMode": "voice" | "text" } }` y la corrección trae por punto `status` (`covered`, `partial`, `missing`, `wrong`), `feedback`, `pages`, `matches` (rangos del texto que activaron cada idea) y `expected` solo cuando el punto no se cubrió.
 
 ## Tipos de artifact
 
@@ -103,6 +105,23 @@ Todo artifact puede llevar `source: { materialId, pages }` (de qué material y p
     { "from": "plantas", "to": "condensacion", "label": "aportan vapor" }
   ],
   "cards": [{ "title": "Fechas", "items": ["Perrault (1674)", "Mariotte (1686)"], "pages": [3] }]
+}
+```
+
+- `explain`: objetivo de explicación. `prompt` pide explicar el tema con las propias palabras y `keyPoints` (3-6) son las ideas que hay que cubrir: cada una con `id`, `label` (visible), `pages`, y la solución oculta `expected` (una a tres frases), `mustMention` (1-3 ideas imprescindibles; sinónimos separados por `|`) y `contradictions` (opcional: frases que delatan una idea equivocada). `source` es obligatorio y las páginas de cada punto tienen que estar en `source.pages` y haberse leído en la conversación. `GET /api/artifacts/:id` devuelve la vista sin `expected`, `mustMention` ni `contradictions`. Límites en `explainLimits`. Los intentos llevan la transcripción y el modo de entrada; la corrección es determinista por cobertura de ideas (sin acentos, tolerando plurales) y vale 1 / 0,5 / 0 por punto.
+
+```json
+{
+  "kind": "explain",
+  "title": "Explica el ciclo del agua",
+  "source": { "materialId": "ciclo-del-agua-a1b2c3", "pages": [1, 2, 3] },
+  "prompt": "Explica con tus palabras cómo funciona el ciclo del agua, de principio a fin.",
+  "keyPoints": [
+    { "id": "evaporacion", "label": "Qué es la evaporación y qué la provoca", "expected": "El calor del sol calienta el agua de mares, ríos y lagos y la convierte en vapor que sube a la atmósfera.", "mustMention": ["sol|calor", "vapor"], "pages": [1] },
+    { "id": "condensacion", "label": "Qué le pasa al vapor en altura", "expected": "Al subir, el vapor se enfría y se condensa en pequeñas gotas que forman las nubes.", "mustMention": ["se enfría|enfriar|frío", "nubes"], "contradictions": ["se calienta en altura"], "pages": [1] },
+    { "id": "precipitacion", "label": "Cómo vuelve el agua a la superficie", "expected": "Cuando las gotas pesan demasiado caen en forma de lluvia, nieve o granizo: es la precipitación.", "mustMention": ["lluvia|precipitación"], "pages": [2] },
+    { "id": "ciclo", "label": "Por qué es un ciclo", "expected": "El agua recogida vuelve a mares y ríos y el proceso empieza de nuevo.", "mustMention": ["vuelve|regresa|empieza de nuevo"], "pages": [2, 3] }
+  ]
 }
 ```
 
