@@ -32,17 +32,42 @@ export const artifactQuery = Atom.family((id: string) =>
     .pipe(Atom.keepAlive, Atom.withReactivity({ artifacts: [id] }))
 );
 
+/** Attempts of one artifact; refreshed when an attempt is submitted (`attempts` key). */
+export const artifactAttemptsQuery = Atom.family((id: string) =>
+  apiRuntime
+    .atom(
+      ApiClient.use((client) =>
+        client.artifacts.listAttempts({ params: { id } })
+      ).pipe(Effect.withSpan("artifacts.listAttempts", { kind: "client" }))
+    )
+    .pipe(Atom.keepAlive, Atom.withReactivity({ attempts: [id] }))
+);
+
+/** Prototype: transcripts for the simulated dictation of an explanation objective. */
+export const dictationSamplesQuery = Atom.family((id: string) =>
+  apiRuntime
+    .atom(
+      ApiClient.use((client) =>
+        client.artifacts.dictationSamples({ params: { id } })
+      ).pipe(Effect.withSpan("artifacts.dictationSamples", { kind: "client" }))
+    )
+    .pipe(Atom.keepAlive)
+);
+
+const submit = (input: SubmitAttemptInput) => {
+  // One call per kind so the payload narrows to the member the contract expects.
+  switch (input.artifactKind) {
+    case "quiz":
+      return ApiClient.use((client) => client.artifacts.submit({ params: { id: input.artifactId }, payload: input }));
+    case "test":
+      return ApiClient.use((client) => client.artifacts.submit({ params: { id: input.artifactId }, payload: input }));
+    case "explain":
+      return ApiClient.use((client) => client.artifacts.submit({ params: { id: input.artifactId }, payload: input }));
+  }
+};
+
 export const submitArtifactAttemptAction = apiRuntime.fn(
   (input: SubmitAttemptInput) =>
-    ApiClient.use((client) => input.artifactKind === "quiz"
-      ? client.artifacts.submit({
-          params: { id: input.artifactId },
-          payload: input
-        })
-      : client.artifacts.submit({
-          params: { id: input.artifactId },
-          payload: input
-        })
-    ).pipe(Effect.withSpan("artifacts.submit", { kind: "client" })),
-  { reactivityKeys: ["artifacts"] }
+    submit(input).pipe(Effect.withSpan("artifacts.submit", { kind: "client" })),
+  { reactivityKeys: ["artifacts", "attempts"] }
 );

@@ -201,6 +201,54 @@ const diagramFields = {
   views: Schema.optional(Schema.Array(DiagramView))
 };
 
+// --- Explanations ---------------------------------------------------------------
+
+/**
+ * Size limits of an explanation objective. The domain validator enforces them
+ * and the tutor's skill quotes them.
+ */
+export const explainLimits = {
+  keyPoints: { min: 3, max: 6 },
+  prompt: { min: 20, max: 240 },
+  label: { min: 8, max: 90 },
+  expected: { min: 20, max: 320 },
+  mustMention: { min: 1, max: 3, term: { max: 40 } },
+  contradictions: { max: 3, term: { max: 80 } },
+  pagesPerPoint: { min: 1, max: 4 },
+  transcript: { min: 20, max: 4000 }
+} as const;
+
+// What the student sees of a key point before explaining: its title and the
+// pages that explain it.
+const explainKeyPointViewFields = {
+  id: Schema.String,
+  label: Schema.String,
+  pages: Schema.Array(Schema.Number)
+};
+
+export const ExplainKeyPointView = Schema.Struct(explainKeyPointViewFields);
+export type ExplainKeyPointView = typeof ExplainKeyPointView.Type;
+
+/**
+ * A key point with the hidden solution the grader compares against. It is
+ * stored and shown to the tutor, never sent to the web before grading.
+ * `mustMention` terms may list synonyms separated by `|` ("condensación|se condensa").
+ * `contradictions` are phrases that reveal a wrong idea ("se evapora por el frío").
+ */
+export const ExplainKeyPoint = Schema.Struct({
+  ...explainKeyPointViewFields,
+  expected: Schema.String,
+  mustMention: Schema.Array(Schema.String),
+  contradictions: Schema.optional(Schema.Array(Schema.String))
+});
+export type ExplainKeyPoint = typeof ExplainKeyPoint.Type;
+
+const explainFields = {
+  /** What the student is asked to explain, in their own words. */
+  prompt: Schema.String,
+  keyPoints: Schema.Array(ExplainKeyPoint)
+};
+
 // --- Artifacts, by kind (the registry) ------------------------------------------
 
 export const NoteArtifact = Schema.Struct({
@@ -231,30 +279,62 @@ export const DiagramArtifact = Schema.Struct({
 });
 export type DiagramArtifact = typeof DiagramArtifact.Type;
 
+export const ExplainArtifact = Schema.Struct({
+  kind: Schema.Literal("explain"),
+  ...artifactBase,
+  ...explainFields
+});
+export type ExplainArtifact = typeof ExplainArtifact.Type;
+
+/** The explanation objective as the web receives it: key points without their solution. */
+export const ExplainArtifactView = Schema.Struct({
+  kind: Schema.Literal("explain"),
+  ...artifactBase,
+  prompt: Schema.String,
+  keyPoints: Schema.Array(ExplainKeyPointView)
+});
+export type ExplainArtifactView = typeof ExplainArtifactView.Type;
+
 export const ArtifactByKind = {
   note: NoteArtifact,
   quiz: QuizArtifact,
   test: TestArtifact,
-  diagram: DiagramArtifact
+  diagram: DiagramArtifact,
+  explain: ExplainArtifact
 } as const;
 
-export const artifactKinds = ["note", "quiz", "test", "diagram"] as const satisfies ReadonlyArray<keyof typeof ArtifactByKind>;
+export const artifactKinds = ["note", "quiz", "test", "diagram", "explain"] as const satisfies ReadonlyArray<keyof typeof ArtifactByKind>;
 export type ArtifactKind = (typeof artifactKinds)[number];
 
 export const ArtifactKind = Schema.Union([
   Schema.Literal("note"),
   Schema.Literal("quiz"),
   Schema.Literal("test"),
-  Schema.Literal("diagram")
+  Schema.Literal("diagram"),
+  Schema.Literal("explain")
 ]);
 
 export const Artifact = Schema.Union([
   ArtifactByKind.note,
   ArtifactByKind.quiz,
   ArtifactByKind.test,
-  ArtifactByKind.diagram
+  ArtifactByKind.diagram,
+  ArtifactByKind.explain
 ]);
 export type Artifact = typeof Artifact.Type;
+
+/**
+ * What `GET /artifacts/:id` returns: every artifact as stored, except the
+ * explanation objective, whose solutions stay on the server.
+ */
+export const ArtifactView = Schema.Union([
+  ArtifactByKind.note,
+  ArtifactByKind.quiz,
+  ArtifactByKind.test,
+  ArtifactByKind.diagram,
+  ExplainArtifactView
+]);
+export type ArtifactView = typeof ArtifactView.Type;
 
 export const isArtifactKind = (value: unknown): value is ArtifactKind =>
   typeof value === "string" && (artifactKinds as ReadonlyArray<string>).includes(value);
@@ -309,18 +389,27 @@ export const CreateDiagramArtifactInput = Schema.Struct({
 });
 export type CreateDiagramArtifactInput = typeof CreateDiagramArtifactInput.Type;
 
+export const CreateExplainArtifactInput = Schema.Struct({
+  kind: Schema.Literal("explain"),
+  ...createBase,
+  ...explainFields
+});
+export type CreateExplainArtifactInput = typeof CreateExplainArtifactInput.Type;
+
 export const CreateArtifactInputByKind = {
   note: CreateNoteArtifactInput,
   quiz: CreateQuizArtifactInput,
   test: CreateTestArtifactInput,
-  diagram: CreateDiagramArtifactInput
+  diagram: CreateDiagramArtifactInput,
+  explain: CreateExplainArtifactInput
 } as const;
 
 export const CreateArtifactInput = Schema.Union([
   CreateArtifactInputByKind.note,
   CreateArtifactInputByKind.quiz,
   CreateArtifactInputByKind.test,
-  CreateArtifactInputByKind.diagram
+  CreateArtifactInputByKind.diagram,
+  CreateArtifactInputByKind.explain
 ]);
 export type CreateArtifactInput = typeof CreateArtifactInput.Type;
 
@@ -458,13 +547,110 @@ export const GradedTestAttempt = Schema.Struct({
 });
 export type GradedTestAttempt = typeof GradedTestAttempt.Type;
 
+// --- Explanation attempts ------------------------------------------------------------
+
+/** How the explanation was entered. `voice` is a transcript; no audio is stored. */
+export const ExplainInputMode = Schema.Union([
+  Schema.Literal("voice"),
+  Schema.Literal("text")
+]);
+export type ExplainInputMode = typeof ExplainInputMode.Type;
+
+export const ExplainAnswer = Schema.Struct({
+  transcript: Schema.String,
+  inputMode: ExplainInputMode
+});
+export type ExplainAnswer = typeof ExplainAnswer.Type;
+
+/**
+ * How well one key point was explained: `covered` (every required idea is
+ * there), `partial` (some), `missing` (none) or `wrong` (a contradiction was
+ * found, which outweighs anything else).
+ */
+export const KeyPointStatus = Schema.Union([
+  Schema.Literal("covered"),
+  Schema.Literal("partial"),
+  Schema.Literal("missing"),
+  Schema.Literal("wrong")
+]);
+export type KeyPointStatus = typeof KeyPointStatus.Type;
+
+/** A required idea found in the transcript, as a character range of the original text. */
+export const KeyPointMatch = Schema.Struct({
+  term: Schema.String,
+  start: Schema.Number,
+  end: Schema.Number
+});
+export type KeyPointMatch = typeof KeyPointMatch.Type;
+
+export const KeyPointCorrection = Schema.Struct({
+  keyPointId: Schema.String,
+  status: KeyPointStatus,
+  feedback: Schema.String,
+  pages: Schema.Array(Schema.Number),
+  matches: Schema.Array(KeyPointMatch),
+  /** The reference explanation, revealed only when the point was not covered. */
+  expected: Schema.optional(Schema.String)
+});
+export type KeyPointCorrection = typeof KeyPointCorrection.Type;
+
+export const UngradedExplainAttempt = Schema.Struct({
+  artifactKind: Schema.Literal("explain"),
+  status: Schema.Literal("ungraded"),
+  ...attemptBase,
+  answer: ExplainAnswer
+});
+export type UngradedExplainAttempt = typeof UngradedExplainAttempt.Type;
+
+export const GradedExplainAttempt = Schema.Struct({
+  artifactKind: Schema.Literal("explain"),
+  status: Schema.Literal("graded"),
+  ...attemptBase,
+  answer: ExplainAnswer,
+  score: Schema.Number,
+  maxScore: Schema.Number,
+  summary: Schema.String,
+  corrections: Schema.Array(KeyPointCorrection)
+});
+export type GradedExplainAttempt = typeof GradedExplainAttempt.Type;
+
 export const ArtifactAttempt = Schema.Union([
   UngradedQuizAttempt,
   GradedQuizAttempt,
   UngradedTestAttempt,
-  GradedTestAttempt
+  GradedTestAttempt,
+  UngradedExplainAttempt,
+  GradedExplainAttempt
 ]);
 export type ArtifactAttempt = typeof ArtifactAttempt.Type;
+
+export const ArtifactAttemptListResponse = Schema.Struct({
+  attempts: Schema.Array(ArtifactAttempt)
+});
+export type ArtifactAttemptListResponse = typeof ArtifactAttemptListResponse.Type;
+
+/**
+ * Sample transcripts for the simulated dictation of the prototype, built from
+ * the objective's solutions: one that covers every point, one that covers
+ * about half, one that names the topic without any required idea.
+ */
+export const DictationSampleQuality = Schema.Union([
+  Schema.Literal("good"),
+  Schema.Literal("partial"),
+  Schema.Literal("weak")
+]);
+export type DictationSampleQuality = typeof DictationSampleQuality.Type;
+
+export const DictationSample = Schema.Struct({
+  quality: DictationSampleQuality,
+  transcript: Schema.String
+});
+export type DictationSample = typeof DictationSample.Type;
+
+export const DictationSamplesResponse = Schema.Struct({
+  samples: Schema.Array(DictationSample)
+});
+export type DictationSamplesResponse = typeof DictationSamplesResponse.Type;
 
 export const SubmitQuizAttemptInput = Schema.Struct({
   artifactKind: Schema.Literal("quiz"),
@@ -480,8 +666,16 @@ export const SubmitTestAttemptInput = Schema.Struct({
 });
 export type SubmitTestAttemptInput = typeof SubmitTestAttemptInput.Type;
 
+export const SubmitExplainAttemptInput = Schema.Struct({
+  artifactKind: Schema.Literal("explain"),
+  artifactId: Schema.String,
+  answer: ExplainAnswer
+});
+export type SubmitExplainAttemptInput = typeof SubmitExplainAttemptInput.Type;
+
 export const SubmitAttemptInput = Schema.Union([
   SubmitQuizAttemptInput,
-  SubmitTestAttemptInput
+  SubmitTestAttemptInput,
+  SubmitExplainAttemptInput
 ]);
 export type SubmitAttemptInput = typeof SubmitAttemptInput.Type;

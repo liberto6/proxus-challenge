@@ -4,6 +4,7 @@ import { FolderNotEmpty, FolderTitleTaken, ProxusApi } from "@proxus/shared";
 import { TutorChatService } from "../../domain/agents/academic-tutor/tutor-chat-service.ts";
 import { SessionRepository } from "../../domain/agents/harness/index.ts";
 import { ArtifactRepository, type Artifact } from "../../domain/artifacts/artifact.ts";
+import { buildDictationSamples, toArtifactView } from "../../domain/artifacts/explain.ts";
 import { FolderRepository, folderOf, isFolderEmpty } from "../../domain/folders/folder.ts";
 import { MaterialRepository, titleFromFileName } from "../../domain/materials/material.ts";
 
@@ -111,13 +112,24 @@ export const ArtifactsHttpHandlers = HttpApiBuilder.group(
         Effect.map((items) => ({ artifacts: items.map(artifactSummary) })),
         Effect.orDie
       ))
-      .handle("get", ({ params }) => artifacts.getArtifact(params.id).pipe(Effect.orDie))
+      // The web never receives an explanation objective's solutions.
+      .handle("get", ({ params }) => artifacts.getArtifact(params.id).pipe(Effect.map(toArtifactView), Effect.orDie))
       .handle("submit", ({ params, payload }) => artifacts.submitAttempt({
         ...payload,
         artifactId: params.id
       }).pipe(
         Effect.flatMap((attempt) => artifacts.gradeAttempt(attempt.id)),
         Effect.orDie
+      ))
+      .handle("listAttempts", ({ params }) => artifacts.listAttempts(params.id).pipe(
+        Effect.map((attempts) => ({ attempts })),
+        Effect.orDie
+      ))
+      .handle("dictationSamples", ({ params }) => artifacts.getArtifact(params.id).pipe(
+        Effect.catch((error) => error._tag === "ArtifactNotFound" ? new HttpApiError.NotFound() : Effect.die(error)),
+        Effect.flatMap((artifact) => artifact.kind === "explain"
+          ? Effect.succeed({ samples: buildDictationSamples(artifact) })
+          : new HttpApiError.NotFound())
       ));
   })
 );

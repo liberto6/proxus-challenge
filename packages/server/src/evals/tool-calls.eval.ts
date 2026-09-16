@@ -320,7 +320,7 @@ const artifactSchemaCase = Effect.sync(() => {
   return [
     criterion("artifact-keeps-source-and-stamps-createdAt", created.source?.materialId === "ciclo-del-agua" && created.source.pages.length === 2 && typeof created.createdAt === "string", `source: ${JSON.stringify(created.source)}, createdAt: ${created.createdAt}`),
     criterion("artifact-without-provenance-still-decodes", legacy._tag === "Success", legacy._tag),
-    criterion("artifact-unknown-kind-rejected", unknownKind._tag === "Failure" && !isArtifactKind("mindmap") && artifactKinds.length === 4, `kinds: ${artifactKinds.join(",")}`),
+    criterion("artifact-unknown-kind-rejected", unknownKind._tag === "Failure" && !isArtifactKind("mindmap") && artifactKinds.length === 5, `kinds: ${artifactKinds.join(",")}`),
     criterion("artifact-diagram-kind-decodes", diagram._tag === "Success" && isArtifactKind("diagram"), diagram._tag)
   ];
 });

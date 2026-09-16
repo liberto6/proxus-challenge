@@ -4,6 +4,7 @@ import { renderedPagesOf } from "../harness/grounding.ts";
 import { currentFolder, inScope } from "../../folders/folder.ts";
 import type { MaterialRepository } from "../../materials/material.ts";
 import { normalizeDiagramInput, renderDiagramIssues, validateDiagram } from "../../artifacts/diagram.ts";
+import { normalizeExplainInput, renderExplainIssues, validateExplain } from "../../artifacts/explain.ts";
 import {
   Artifact,
   ArtifactAttempt,
@@ -42,6 +43,8 @@ const createdArtifactSize = (artifact: Artifact) => {
       return { questionCount: artifact.questions.length };
     case "diagram":
       return { diagramType: artifact.diagramType, nodeCount: artifact.nodes.length, edgeCount: artifact.edges.length };
+    case "explain":
+      return { keyPointCount: artifact.keyPoints.length };
   }
 };
 const renderAttempt = (attempt: ArtifactAttempt) => JSON.stringify(attempt, null, 2);
@@ -112,7 +115,7 @@ const normalizeQuestion = (question: unknown) =>
 
 const normalizeCreateArtifactInput = (input: unknown) => {
   if (!isRecord(input) || !Array.isArray(input.questions)) {
-    return normalizeDiagramInput(input);
+    return normalizeExplainInput(normalizeDiagramInput(input));
   }
 
   return {
@@ -133,6 +136,38 @@ class DiagramRejected extends Data.TaggedError("DiagramRejected")<{
   readonly report: string;
 }> {}
 
+/** An explanation objective the model must fix before it is persisted; same round trip as diagrams. */
+class ExplainRejected extends Data.TaggedError("ExplainRejected")<{
+  readonly report: string;
+}> {}
+
+/** Unknown material id, reported as an issue so the model can fix the source. */
+class UnknownMaterial extends Data.TaggedError("UnknownMaterial")<{
+  readonly materialId: string;
+}> {}
+
+/**
+ * What the validators check anchored artifacts against: the material's page
+ * range and the pages rendered in this conversation.
+ */
+const anchoringContext = (input: CreateArtifactInput, materials: MaterialRepository) =>
+  Effect.gen(function* () {
+    const materialId = input.source?.materialId;
+    const pageCount = materialId === undefined
+      ? undefined
+      : yield* materials.get(materialId).pipe(
+          Effect.map((material) => material.pageCount),
+          Effect.catch(() => Effect.succeed(undefined))
+        );
+    if (materialId !== undefined && pageCount === undefined) {
+      return yield* new UnknownMaterial({ materialId });
+    }
+    const renderedPages = materialId === undefined ? undefined : yield* renderedPagesOf(materialId);
+    return { pageCount, renderedPages };
+  });
+
+const unknownMaterialMessage = (materialId: string) => `Material "${materialId}" does not exist. Use the id from \`materials list\`.`;
+
 /**
  * Diagrams are checked against the material (page range) and the pages read in
  * this conversation, so a node can only cite what the tutor has actually seen.
@@ -143,26 +178,36 @@ const checkDiagram = (input: CreateArtifactInput, materials: MaterialRepository)
       return input;
     }
 
-    const materialId = input.source?.materialId;
-    const pageCount = materialId === undefined
-      ? undefined
-      : yield* materials.get(materialId).pipe(
-          Effect.map((material) => material.pageCount),
-          Effect.catch(() => Effect.succeed(undefined))
-        );
-    if (materialId !== undefined && pageCount === undefined) {
-      return yield* new DiagramRejected({
-        report: renderDiagramIssues([{
-          code: "source-required",
-          message: `Material "${materialId}" does not exist. Use the id from \`materials list\`.`
-        }])
-      });
-    }
-
-    const renderedPages = materialId === undefined ? undefined : yield* renderedPagesOf(materialId);
-    const issues = validateDiagram(input, { pageCount, renderedPages });
+    const context = yield* anchoringContext(input, materials).pipe(
+      Effect.mapError((error) => new DiagramRejected({
+        report: renderDiagramIssues([{ code: "source-required", message: unknownMaterialMessage(error.materialId) }])
+      }))
+    );
+    const issues = validateDiagram(input, context);
     if (issues.length > 0) {
       return yield* new DiagramRejected({ report: renderDiagramIssues(issues) });
+    }
+    return input;
+  });
+
+/**
+ * Explanation objectives follow the same rule: every key point cites pages of
+ * the source that were rendered in this conversation.
+ */
+const checkExplain = (input: CreateArtifactInput, materials: MaterialRepository): Effect.Effect<CreateArtifactInput, ExplainRejected> =>
+  Effect.gen(function* () {
+    if (input.kind !== "explain") {
+      return input;
+    }
+
+    const context = yield* anchoringContext(input, materials).pipe(
+      Effect.mapError((error) => new ExplainRejected({
+        report: renderExplainIssues([{ code: "source-required", message: unknownMaterialMessage(error.materialId) }])
+      }))
+    );
+    const issues = validateExplain(input, context);
+    if (issues.length > 0) {
+      return yield* new ExplainRejected({ report: renderExplainIssues(issues) });
     }
     return input;
   });
@@ -225,7 +270,7 @@ export const makeArtifactCommands = (repository: ArtifactRepository, materials: 
       description: "Create a quiz artifact"
     }
   ])(
-    AgentCli.Command.withDescription("Create a note, quiz, test, or diagram artifact from JSON")(
+    AgentCli.Command.withDescription("Create a note, quiz, test, diagram, or explanation objective from JSON")(
       AgentCli.Command.exec("create", {
         json: AgentCli.Argument.string("json").pipe(
           AgentCli.Argument.withDescription("CreateArtifactInput JSON")
@@ -233,11 +278,14 @@ export const makeArtifactCommands = (repository: ArtifactRepository, materials: 
       }, ({ json }) =>
         decodeCreateArtifactInput(json).pipe(
           Effect.flatMap((input) => checkDiagram(input, materials)),
+          Effect.flatMap((input) => checkExplain(input, materials)),
           Effect.flatMap((input) => currentFolder.pipe(Effect.flatMap((folderId) => repository.createArtifact(input, folderId === undefined ? {} : { folderId })))),
           // A compact confirmation: the model already knows the content it sent,
           // and echoing it back invites repeating it to the student.
           Effect.map(renderCreatedArtifact),
-          Effect.catch((error) => Effect.succeed(error._tag === "DiagramRejected" ? error.report : renderArtifactError(error)))
+          Effect.catch((error) => Effect.succeed(
+            error._tag === "DiagramRejected" || error._tag === "ExplainRejected" ? error.report : renderArtifactError(error)
+          ))
         )
       )
     )

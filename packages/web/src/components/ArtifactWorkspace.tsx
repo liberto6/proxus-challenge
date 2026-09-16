@@ -1,6 +1,6 @@
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
-  Artifact,
+  ArtifactView as Artifact,
   ArtifactAttempt,
   QuestionCorrection,
   QuizQuestion,
@@ -47,7 +47,9 @@ export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactW
               ? <NoteViewer key={value.id} artifact={value} />
               : value.kind === "diagram"
                 ? <DiagramPanel key={value.id} artifact={value} onAskTutor={onAskTutor} />
-                : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} />}
+                : value.kind === "explain"
+                  ? <ExplainPlaceholder key={value.id} artifact={value} />
+                  : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} />}
           </>
         )
       })}
@@ -110,6 +112,25 @@ function NoteViewer({ artifact }: { readonly artifact: Extract<Artifact, { reado
         <div className="markdown">
           <Streamdown>{artifact.markdown}</Streamdown>
         </div>
+      </article>
+    </div>
+  );
+}
+
+/** Until the explanation workspace lands: the objective's prompt and its key points. */
+function ExplainPlaceholder({ artifact }: { readonly artifact: Extract<Artifact, { readonly kind: "explain" }> }) {
+  return (
+    <div className="min-h-0 overflow-y-auto p-5">
+      <div className="mb-3 flex flex-wrap items-center gap-2 font-bold text-ink-muted text-sm">
+        <span className="badge badge-lila">{kindLabel.explain}</span>
+        <ArtifactProvenance artifact={artifact} />
+        <span>· {pluralize(artifact.keyPoints.length, "punto clave", "puntos clave")}</span>
+      </div>
+      <article className="card p-5">
+        <p className="mb-3 font-display font-semibold text-xl leading-tight">{artifact.prompt}</p>
+        <ol className="flex flex-col gap-1.5 pl-5 font-semibold text-ink-muted text-sm" style={{ listStyle: "decimal" }}>
+          {artifact.keyPoints.map((point) => <li key={point.id}>{point.label}</li>)}
+        </ol>
       </article>
     </div>
   );
@@ -230,7 +251,7 @@ function ExerciseSolver({ artifact, onAskTutor }: {
     [answers, artifact.questions]
   );
   const answered = artifact.questions.length - unansweredQuestions.length;
-  const graded = attempt?.status === "graded" ? attempt : undefined;
+  const graded = attempt?.status === "graded" && attempt.artifactKind !== "explain" ? attempt : undefined;
 
   useEffect(() => {
     // Instant, not smooth: the result card is inserted at the same time and a

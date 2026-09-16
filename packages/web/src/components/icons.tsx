@@ -10,6 +10,7 @@ export type IconName =
   | "note"
   | "test"
   | "diagram"
+  | "mic"
   | "upload"
   | "trash"
   | "close"
@@ -36,6 +37,7 @@ const paths: Record<IconName, string> = {
   note: '<path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h8M8 17h5"/>',
   test: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/>',
   diagram: '<rect x="9" y="3" width="6" height="5" rx="1"/><rect x="3" y="16" width="6" height="5" rx="1"/><rect x="15" y="16" width="6" height="5" rx="1"/><path d="M12 8v4M6 16v-2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"/>',
+  mic: '<rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0"/><path d="M12 18v3M9 21h6"/>',
   upload: '<path d="M12 16V4"/><path d="m6 10 6-6 6 6"/><path d="M4 20h16"/>',
   trash: '<path d="M4 7h16M10 11v6M14 11v6"/><path d="M6 7l1 13h10l1-13"/><path d="M9 7V4h6v3"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
@@ -96,9 +98,9 @@ export function Mascot({ size = 36, className }: { readonly size?: number; reado
   );
 }
 
-export const kindIcon: Record<ArtifactKind, IconName> = { note: "note", quiz: "quiz", test: "test", diagram: "diagram" };
+export const kindIcon: Record<ArtifactKind, IconName> = { note: "note", quiz: "quiz", test: "test", diagram: "diagram", explain: "mic" };
 
-export const kindLabel: Record<ArtifactKind, string> = { note: "Nota", quiz: "Quiz", test: "Test", diagram: "Esquema" };
+export const kindLabel: Record<ArtifactKind, string> = { note: "Nota", quiz: "Quiz", test: "Test", diagram: "Esquema", explain: "Explicación" };
 
 /** Caja de color por tipo de artefacto, con su icono dentro. */
 export function KindIcon({ kind, size = 34, className }: { readonly kind: ArtifactKind | "pdf"; readonly size?: number; readonly className?: string }) {

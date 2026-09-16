@@ -272,6 +272,11 @@
     color: var(--color-coral-strong);
   }
 
+  .kind-explain {
+    background: var(--color-rosa-soft);
+    color: var(--color-rosa-ink);
+  }
+
   /* Esquema interactivo: lienzo con trama y controles de vista. */
   .diagram-stage {
     height: min(52vh, 420px);

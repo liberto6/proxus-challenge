@@ -12,6 +12,7 @@
     "eval:tutor:artifact-authoring": "node --env-file=../../.env --import tsx src/evals/artifact-authoring.eval.ts",
     "eval:tutor:tool-calls": "node --import tsx src/evals/tool-calls.eval.ts",
     "eval:tutor:diagram": "node --env-file=../../.env --import tsx src/evals/diagram.eval.ts",
+    "eval:tutor:explain": "node --import tsx src/evals/explain.eval.ts",
     "eval:tutor:grounding": "node --env-file=../../.env --import tsx src/evals/grounding.eval.ts",
     "eval:tutor:sessions": "node --import tsx src/evals/sessions.eval.ts",
     "eval:materials": "node --import tsx src/evals/materials.eval.ts",

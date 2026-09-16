@@ -495,17 +495,19 @@ const createdArtifacts = (messages: readonly AgentMessage[]): ReadonlyArray<Crea
   messages.flatMap((message) => {
     if (message.role !== "tool-result" || message.isFailure) return [];
     const result = typeof message.result === "string" ? safeJson(message.result) : message.result;
-    const typed = result as { created?: unknown; id?: unknown; kind?: unknown; title?: unknown; questionCount?: unknown; nodeCount?: unknown } | undefined;
+    const typed = result as { created?: unknown; id?: unknown; kind?: unknown; title?: unknown; questionCount?: unknown; nodeCount?: unknown; keyPointCount?: unknown } | undefined;
     if (typed?.created !== true || typeof typed.id !== "string" || !isArtifactKind(typed.kind) || typeof typed.title !== "string") return [];
     const size = typeof typed.questionCount === "number"
       ? pluralize(typed.questionCount, "pregunta", "preguntas")
       : typeof typed.nodeCount === "number"
         ? pluralize(typed.nodeCount, "concepto", "conceptos")
-        : undefined;
+        : typeof typed.keyPointCount === "number"
+          ? pluralize(typed.keyPointCount, "punto clave", "puntos clave")
+          : undefined;
     return [{ id: typed.id, kind: typed.kind, title: typed.title, size }];
   });
 
-const openArticle: Record<ArtifactKind, string> = { note: "la nota", quiz: "el quiz", test: "el test", diagram: "el esquema" };
+const openArticle: Record<ArtifactKind, string> = { note: "la nota", quiz: "el quiz", test: "el test", diagram: "el esquema", explain: "la explicación" };
 
 const safeJson = (text: string): unknown => {
   try {

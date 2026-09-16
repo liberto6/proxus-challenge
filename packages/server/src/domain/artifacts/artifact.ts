@@ -5,6 +5,8 @@ import {
   type ArtifactKind,
   type AutoQuestionCorrection,
   type CreateArtifactInput,
+  type ExplainArtifact,
+  type GradedExplainAttempt,
   type GradedQuizAttempt,
   type GradedTestAttempt,
   type ListArtifactsInput,
@@ -16,9 +18,11 @@ import {
   type TestAnswer,
   type TestArtifact,
   type TestQuestion,
+  type UngradedExplainAttempt,
   type UngradedQuizAttempt,
   type UngradedTestAttempt
 } from "@proxus/shared";
+import { gradeExplain } from "./explain.ts";
 
 /**
  * Artifact domain: ports, errors and behaviour (creation, grading).
@@ -29,14 +33,17 @@ import {
 export {
   Artifact,
   ArtifactAttempt,
+  ArtifactAttemptListResponse,
   ArtifactByKind,
   ArtifactKind,
   ArtifactSource,
   ArtifactSummary,
+  ArtifactView,
   AutoQuestionCorrection,
   CreateArtifactInput,
   CreateArtifactInputByKind,
   CreateDiagramArtifactInput,
+  CreateExplainArtifactInput,
   CreateNoteArtifactInput,
   CreateQuizArtifactInput,
   CreateTestArtifactInput,
@@ -48,8 +55,21 @@ export {
   DiagramNodeKind,
   DiagramType,
   DiagramView,
+  DictationSample,
+  DictationSampleQuality,
+  DictationSamplesResponse,
+  ExplainAnswer,
+  ExplainArtifact,
+  ExplainArtifactView,
+  ExplainInputMode,
+  ExplainKeyPoint,
+  ExplainKeyPointView,
+  GradedExplainAttempt,
   GradedQuizAttempt,
   GradedTestAttempt,
+  KeyPointCorrection,
+  KeyPointMatch,
+  KeyPointStatus,
   ListArtifactsInput,
   MultipleChoiceAnswer,
   MultipleChoiceCorrection,
@@ -64,6 +84,7 @@ export {
   ShortAnswerCorrection,
   ShortAnswerQuestion,
   SubmitAttemptInput,
+  SubmitExplainAttemptInput,
   SubmitQuizAttemptInput,
   SubmitTestAttemptInput,
   TestAnswer,
@@ -72,10 +93,12 @@ export {
   TrueFalseAnswer,
   TrueFalseCorrection,
   TrueFalseQuestion,
+  UngradedExplainAttempt,
   UngradedQuizAttempt,
   UngradedTestAttempt,
   artifactKinds,
   diagramLimits,
+  explainLimits,
   isArtifactKind
 } from "@proxus/shared";
 
@@ -89,7 +112,7 @@ export class AttemptNotFound extends Data.TaggedError("AttemptNotFound")<{
 
 export class ArtifactTypeMismatch extends Data.TaggedError("ArtifactTypeMismatch")<{
   readonly artifactId: string;
-  readonly expected: "quiz" | "test";
+  readonly expected: "quiz" | "test" | "explain";
   readonly actual: ArtifactKind;
 }> {}
 
@@ -154,6 +177,8 @@ export const makeArtifact = (input: CreateArtifactInput, options: CreateArtifact
       return { ...input, id, createdAt, ...folder };
     case "diagram":
       return { ...input, id, createdAt, ...folder };
+    case "explain":
+      return { ...input, id, createdAt, ...folder };
   }
 };
 
@@ -164,6 +189,8 @@ export const makeUngradedAttempt = (input: SubmitAttemptInput): ArtifactAttempt 
     case "quiz":
       return { ...input, id, status: "ungraded", createdAt };
     case "test":
+      return { ...input, id, status: "ungraded", createdAt };
+    case "explain":
       return { ...input, id, status: "ungraded", createdAt };
   }
 };
@@ -187,8 +214,20 @@ export const gradeAttempt = (
         return Effect.fail(new ArtifactTypeMismatch({ artifactId: artifact.id, expected: "test", actual: artifact.kind }));
       }
       return gradeTestAttempt(artifact, attempt);
+    case "explain":
+      if (artifact.kind !== "explain") {
+        return Effect.fail(new ArtifactTypeMismatch({ artifactId: artifact.id, expected: "explain", actual: artifact.kind }));
+      }
+      return Effect.succeed(gradeExplainAttempt(artifact, attempt));
   }
 };
+
+/** Term coverage per key point; the rules live in `explain.ts`. */
+const gradeExplainAttempt = (artifact: ExplainArtifact, attempt: UngradedExplainAttempt): GradedExplainAttempt => ({
+  ...attempt,
+  status: "graded" as const,
+  ...gradeExplain(artifact, attempt.answer)
+});
 
 const gradeQuizAttempt = (
   artifact: QuizArtifact,
