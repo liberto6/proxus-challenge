@@ -47,12 +47,27 @@ export interface LayoutEdge {
   readonly labelY: number;
 }
 
-export interface DiagramLayout {
-  readonly nodes: readonly LayoutNode[];
-  readonly edges: readonly LayoutEdge[];
+/** Outlined box around the members of a group, drawn behind the nodes. */
+export interface LayoutGroup {
+  readonly id: string;
+  readonly label: string;
+  readonly nodeIds: readonly string[];
+  readonly x: number;
+  readonly y: number;
   readonly width: number;
   readonly height: number;
 }
+
+export interface DiagramLayout {
+  readonly nodes: readonly LayoutNode[];
+  readonly edges: readonly LayoutEdge[];
+  readonly groups: readonly LayoutGroup[];
+  readonly width: number;
+  readonly height: number;
+}
+
+const GROUP_PADDING = 18;
+const GROUP_TITLE = 22;
 
 interface Point {
   readonly x: number;
@@ -157,7 +172,7 @@ const ring = (artifact: DiagramArtifact, path: readonly string[], allEdges: Diag
   }
   layoutEdges.push(...straightEdges(edges, rects, "side"));
 
-  return { nodes: frame.nodes, edges: layoutEdges, width: frame.width, height: frame.height };
+  return finish(artifact, frame, layoutEdges);
 };
 
 // --- Process: column -------------------------------------------------------------
@@ -215,7 +230,7 @@ const column = (artifact: DiagramArtifact, path: readonly string[], allEdges: Di
     });
   }
   layoutEdges.push(...straightEdges(edges, rects, "side"));
-  return { nodes: frame.nodes, edges: layoutEdges, width: frame.width, height: frame.height };
+  return finish(artifact, frame, layoutEdges);
 };
 
 /**
@@ -252,6 +267,14 @@ const sideNodeTargets = (artifact: DiagramArtifact, path: readonly string[], edg
   for (const edge of edges) {
     if (!inPath.has(edge.from) && inPath.has(edge.to) && !targets.has(edge.from)) targets.set(edge.from, edge.to);
     if (!inPath.has(edge.to) && inPath.has(edge.from) && !targets.has(edge.to)) targets.set(edge.to, edge.from);
+  }
+  // Members of a group that contains a step hang from that step.
+  for (const group of artifact.groups ?? []) {
+    const step = group.nodeIds.find((id) => inPath.has(id));
+    if (step === undefined) continue;
+    for (const member of group.nodeIds) {
+      if (!inPath.has(member) && !targets.has(member)) targets.set(member, step);
+    }
   }
   // Side concepts linked only to other side concepts follow their neighbour's step.
   let changed = true;
@@ -306,12 +329,26 @@ const layered = (artifact: DiagramArtifact, edges: DiagramArtifact["edges"]): Di
     rows.push(unreachable);
   }
 
-  // Order each row by the mean position of its neighbours in the row above.
+  // Order each row by the mean position of its neighbours in the row above;
+  // members of a group stay adjacent (ordered by the group's own barycentre).
+  const groupOf = new Map<string, number>();
+  (artifact.groups ?? []).forEach((group, index) => group.nodeIds.forEach((id) => groupOf.set(id, index)));
   const position = new Map<string, number>();
   rows.forEach((row, rowIndex) => {
+    const own = new Map(row.map((id) => [id, barycenter(id, neighbours, position, rowIndex, depth)]));
+    const groupCenter = (id: string): number => {
+      const group = groupOf.get(id);
+      if (group === undefined) return own.get(id) ?? 0;
+      const members = row.filter((other) => groupOf.get(other) === group);
+      return members.reduce((sum, other) => sum + (own.get(other) ?? 0), 0) / members.length;
+    };
     const ordered = rowIndex === 0
       ? row
-      : [...row].sort((a, b) => barycenter(a, neighbours, position, rowIndex, depth) - barycenter(b, neighbours, position, rowIndex, depth) || row.indexOf(a) - row.indexOf(b));
+      : [...row].sort((a, b) =>
+          groupCenter(a) - groupCenter(b)
+          || (groupOf.get(a) ?? -1) - (groupOf.get(b) ?? -1)
+          || (own.get(a) ?? 0) - (own.get(b) ?? 0)
+          || row.indexOf(a) - row.indexOf(b));
     ordered.forEach((id, index) => position.set(id, index - (ordered.length - 1) / 2));
     rows[rowIndex] = ordered;
   });
@@ -370,7 +407,7 @@ const layered = (artifact: DiagramArtifact, edges: DiagramArtifact["edges"]): Di
     };
   });
 
-  return { nodes: frame.nodes, edges: layoutEdges, width: frame.width, height: frame.height };
+  return finish(artifact, frame, layoutEdges);
 };
 
 const barycenter = (
@@ -384,6 +421,54 @@ const barycenter = (
   if (above.length === 0) return 0;
   return above.reduce((sum, other) => sum + (position.get(other) ?? 0), 0) / above.length;
 };
+
+// --- Groups ------------------------------------------------------------------------------
+
+/**
+ * Envelopes around the members of each group: the bounding box of the member
+ * boxes plus padding and room for the title. Computed after placement, so a
+ * group's look depends on its members staying together (side concepts of a
+ * group hang from the same step; concept-map rows keep members adjacent).
+ */
+const groupEnvelopes = (artifact: DiagramArtifact, nodes: readonly LayoutNode[]): LayoutGroup[] => {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  return (artifact.groups ?? []).flatMap((group) => {
+    const members = group.nodeIds.flatMap((id) => {
+      const box = byId.get(id);
+      return box === undefined ? [] : [box];
+    });
+    if (members.length === 0) return [];
+    const x = Math.min(...members.map((box) => box.x)) - GROUP_PADDING;
+    const y = Math.min(...members.map((box) => box.y)) - GROUP_PADDING - GROUP_TITLE;
+    const right = Math.max(...members.map((box) => box.x + box.width)) + GROUP_PADDING;
+    const bottom = Math.max(...members.map((box) => box.y + box.height)) + GROUP_PADDING;
+    return [{ id: group.id, label: group.label, nodeIds: members.map((box) => box.id), x: round(x), y: round(y), width: round(right - x), height: round(bottom - y) }];
+  });
+};
+
+/** Assembles the layout and grows the frame so group envelopes stay inside it. */
+const finish = (artifact: DiagramArtifact, frame: ReturnType<typeof normalize>, edges: readonly LayoutEdge[]): DiagramLayout => {
+  const groups = groupEnvelopes(artifact, frame.nodes);
+  const shiftX = Math.max(0, ...groups.map((group) => PADDING - group.x));
+  const shiftY = Math.max(0, ...groups.map((group) => PADDING - group.y));
+  const nodes = shiftX === 0 && shiftY === 0 ? frame.nodes : frame.nodes.map((node) => ({ ...node, x: round(node.x + shiftX), y: round(node.y + shiftY) }));
+  const shifted = shiftX === 0 && shiftY === 0 ? groups : groups.map((group) => ({ ...group, x: round(group.x + shiftX), y: round(group.y + shiftY) }));
+  const movedEdges = shiftX === 0 && shiftY === 0 ? edges : edges.map((edge) => ({ ...edge, path: shiftPath(edge.path, shiftX, shiftY), labelX: round(edge.labelX + shiftX), labelY: round(edge.labelY + shiftY) }));
+  const width = Math.max(frame.width + shiftX, ...shifted.map((group) => group.x + group.width + PADDING));
+  const height = Math.max(frame.height + shiftY, ...shifted.map((group) => group.y + group.height + PADDING));
+  return { nodes, edges: movedEdges, groups: shifted, width: round(width), height: round(height) };
+};
+
+/** Moves every absolute coordinate pair of a path (M, L, Q control/end points, A end point). Arc radii are untouched. */
+const shiftPath = (path: string, dx: number, dy: number): string =>
+  path.replace(/([MLQ]|A [\d.]+ [\d.]+ \d \d \d)((?:\s+-?[\d.]+\s+-?[\d.]+)+)/g, (_, command: string, coords: string) => {
+    const numbers = coords.trim().split(/\s+/).map(Number);
+    const moved: string[] = [];
+    for (let index = 0; index < numbers.length; index += 2) {
+      moved.push(`${round(numbers[index]! + dx)} ${round(numbers[index + 1]! + dy)}`);
+    }
+    return `${command} ${moved.join(" ")}`;
+  });
 
 // --- Shared geometry -----------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 import type { DiagramArtifact, DiagramNode, DiagramNodeKind } from "@proxus/shared";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
-import { layoutDiagram, splitTransitions, type DiagramLayout, type LayoutEdge, type LayoutNode } from "../domain/diagrams/layout.ts";
+import { layoutDiagram, splitTransitions, type DiagramLayout, type LayoutEdge, type LayoutGroup, type LayoutNode } from "../domain/diagrams/layout.ts";
 import { toMermaid } from "../domain/diagrams/mermaid.ts";
 import { formatPages } from "../lib/format.ts";
 import { Icon } from "./icons.tsx";
@@ -43,9 +43,12 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [kindFilter, setKindFilter] = useState<DiagramNodeKind | undefined>();
   const [viewIndex, setViewIndex] = useState<number | undefined>();
+  const [groupId, setGroupId] = useState<string | undefined>();
   const views = artifact.views ?? [];
-  const activeView = viewIndex === undefined ? undefined : views[viewIndex];
-  const viewFocus = useMemo(() => new Set(activeView?.focus ?? []), [activeView]);
+  const activeView = viewIndex === undefined
+    ? groupId === undefined ? undefined : layout.groups.find((group) => group.id === groupId)
+    : views[viewIndex];
+  const viewFocus = useMemo(() => new Set(activeView === undefined ? [] : "focus" in activeView ? activeView.focus : activeView.nodeIds), [activeView]);
   const [viewBox, setViewBox] = useState<ViewBox>(() => fullView(layout));
   const [copied, setCopied] = useState(false);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -67,6 +70,7 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
     setViewBox(fullView(layout));
     setSelectedId(undefined);
     setViewIndex(undefined);
+    setGroupId(undefined);
     setKindFilter(undefined);
   }, [layout]);
 
@@ -220,6 +224,15 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                       <path d="M 0 0 L 10 5 L 0 10 z" fill={palette.ink} />
                     </marker>
                   </defs>
+                  {layout.groups.map((group) => (
+                    <GroupShape
+                      key={group.id}
+                      group={group}
+                      active={groupId === group.id}
+                      dim={selectedId !== undefined || (activeView !== undefined && groupId !== group.id)}
+                      onSelect={() => { setGroupId((current) => current === group.id ? undefined : group.id); setViewIndex(undefined); select(undefined); setKindFilter(undefined); }}
+                    />
+                  ))}
                   {layout.edges.map((edge) => (
                     <EdgeShape
                       key={edge.id}
@@ -263,12 +276,12 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                       type="button"
                       className={`btn btn-sm ${viewIndex === index ? "btn-secondary" : "btn-ghost"}`}
                       aria-pressed={viewIndex === index}
-                      onClick={() => { setViewIndex((current) => current === index ? undefined : index); select(undefined); setKindFilter(undefined); }}
+                      onClick={() => { setViewIndex((current) => current === index ? undefined : index); setGroupId(undefined); select(undefined); setKindFilter(undefined); }}
                     >
                       {view.label}
                     </button>
                   ))}
-                  {activeView?.note !== undefined && <span className="basis-full font-semibold text-ink-muted text-sm">{activeView.note}</span>}
+                  {activeView !== undefined && "note" in activeView && activeView.note !== undefined && <span className="basis-full font-semibold text-ink-muted text-sm">{activeView.note}</span>}
                 </div>
               )}
 
@@ -281,7 +294,7 @@ export function DiagramViewer({ artifact, onAskTutor, onOpenPage, openPage }: Di
                         className={`badge cursor-pointer hover:border-ink ${kindFilter === kind ? "badge-sun" : "badge-neutral"}`}
                         aria-pressed={kindFilter === kind}
                         title={kindFilter === kind ? "Quitar el filtro" : `Ver solo: ${kindLabels[kind]}`}
-                        onClick={() => { setKindFilter((current) => current === kind ? undefined : kind); select(undefined); setViewIndex(undefined); }}
+                        onClick={() => { setKindFilter((current) => current === kind ? undefined : kind); select(undefined); setViewIndex(undefined); setGroupId(undefined); }}
                       >
                         <span className="inline-block size-2.5 rounded-sm border border-ink" style={{ background: kindStyles[kind].fill }} aria-hidden="true" />
                         {kindLabels[kind]} · {count}
@@ -446,6 +459,52 @@ function NodeShape({ box, node, kind, state, onSelect }: {
           {line.text}
         </text>
       ))}
+    </g>
+  );
+}
+
+/** Dashed envelope with a title; clicking the title focuses the members. */
+function GroupShape({ group, active, dim, onSelect }: {
+  readonly group: LayoutGroup;
+  readonly active: boolean;
+  readonly dim: boolean;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <g data-dim={dim ? "true" : undefined} opacity={dim ? 0.35 : 1} style={{ transition: "opacity 120ms ease-out" }}>
+      <rect
+        x={group.x}
+        y={group.y}
+        width={group.width}
+        height={group.height}
+        rx={14}
+        fill={active ? palette.sunSoft : palette.paper}
+        fillOpacity={active ? 0.6 : 0.45}
+        stroke={active ? palette.sun : palette.inkMuted}
+        strokeWidth={2}
+        strokeDasharray="7 5"
+      />
+      <text
+        x={group.x + 14}
+        y={group.y + 17}
+        fontSize={12}
+        fontWeight={800}
+        fill={palette.inkMuted}
+        role="button"
+        tabIndex={0}
+        aria-label={`Grupo: ${group.label}`}
+        style={{ cursor: "pointer" }}
+        onPointerDown={(event) => event.stopPropagation()}
+        onClick={onSelect}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onSelect();
+          }
+        }}
+      >
+        {group.label.toLocaleUpperCase()}
+      </text>
     </g>
   );
 }

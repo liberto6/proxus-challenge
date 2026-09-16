@@ -170,6 +170,48 @@ const sameRowEdge = sameRowLayout.edges.find((edge) => edge.from === "escorrenti
 const rowY = sameRowLayout.nodes.find((box) => box.id === "escorrentia")?.y ?? 0;
 results.push(criterion("map.same-row-edge-dips-below", sameRowEdge !== undefined && sameRowEdge.path.includes(" Q ") && sameRowEdge.labelY > rowY + 72, `label y ${sameRowEdge?.labelY} vs row y ${rowY}`));
 
+// Groups: members inside their envelope, envelopes apart, a sub-step group around a step of the ring.
+const grouped: DiagramArtifact = {
+  ...cycle,
+  id: "grouped",
+  nodes: [...cycle.nodes, node("escorrentia", "Escorrentía", [2]), node("infiltracion", "Infiltración", [2])],
+  edges: [...cycle.edges, { from: "recoleccion", to: "escorrentia", label: "una vía es" }, { from: "recoleccion", to: "infiltracion", label: "otra vía es" }],
+  groups: [
+    { id: "destinos", label: "Destinos del agua", nodeIds: ["recoleccion", "escorrentia", "infiltracion"] },
+    { id: "aportes", label: "Aportes de vapor", nodeIds: ["transpiracion", "sublimacion"] }
+  ]
+};
+const groupedLayout = layoutDiagram(grouped);
+const envelopeContains = (group: { x: number; y: number; width: number; height: number }, box: { x: number; y: number; width: number; height: number }) =>
+  box.x >= group.x && box.y >= group.y && box.x + box.width <= group.x + group.width && box.y + box.height <= group.y + group.height;
+const membersInside = groupedLayout.groups.every((group) => group.nodeIds.every((id) => {
+  const box = groupedLayout.nodes.find((candidate) => candidate.id === id);
+  return box !== undefined && envelopeContains(group, box);
+}));
+const envelopesApart = groupedLayout.groups.every((a, i) => groupedLayout.groups.every((b, j) => i >= j
+  || a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y));
+const strangers = groupedLayout.groups.flatMap((group) => groupedLayout.nodes.filter((box) => !group.nodeIds.includes(box.id) && envelopeContains(group, box)).map((box) => `${group.id}:${box.id}`));
+results.push(
+  criterion("groups.members-inside-envelope", membersInside, `${groupedLayout.groups.length} groups`),
+  criterion("groups.envelopes-do-not-cross", envelopesApart, groupedLayout.groups.map((group) => `${group.id}@${group.x},${group.y}`).join(" ")),
+  criterion("groups.no-stranger-inside", strangers.length === 0, strangers.join(",") || "only members inside"),
+  criterion("groups.frame-contains-envelopes", groupedLayout.groups.every((group) => group.x >= 0 && group.y >= 0 && group.x + group.width <= groupedLayout.width && group.y + group.height <= groupedLayout.height) && overlaps(groupedLayout).length === 0, `${groupedLayout.width}x${groupedLayout.height}`),
+  criterion("grouped.deterministic", JSON.stringify(layoutDiagram(grouped)) === JSON.stringify(groupedLayout), "same output twice")
+);
+
+const groupedMap: DiagramArtifact = {
+  ...conceptMap,
+  id: "grouped-map",
+  groups: [{ id: "vias", label: "Vías", nodeIds: ["escorrentia", "infiltracion"] }, { id: "destinos", label: "Destinos", nodeIds: ["acuifero", "rios"] }]
+};
+const groupedMapLayout = layoutDiagram(groupedMap);
+results.push(
+  criterion("groups.map-members-adjacent", groupedMapLayout.groups.every((group) => group.nodeIds.every((id) => {
+    const box = groupedMapLayout.nodes.find((candidate) => candidate.id === id);
+    return box !== undefined && envelopeContains(group, box);
+  })) && groupedMapLayout.groups.flatMap((group) => groupedMapLayout.nodes.filter((box) => !group.nodeIds.includes(box.id) && envelopeContains(group, box))).length === 0, groupedMapLayout.groups.map((group) => `${group.id}: ${group.width}x${group.height}`).join(" "))
+);
+
 const mermaid = toMermaid(cycle);
 results.push(
   criterion("mermaid-export-counts", mermaid.startsWith("flowchart TD") && (mermaid.match(/-->/g) ?? []).length === 6 && mermaidEdgeCount(cycle) === 6 && mermaid.includes("recoleccion --> evaporacion") && mermaid.includes('-- "aporta vapor" -->'), `${(mermaid.match(/-->/g) ?? []).length} arrows`)
