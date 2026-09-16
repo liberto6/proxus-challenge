@@ -28,6 +28,9 @@ export const uploadMaterial = async (file: File, title?: string): Promise<PdfMat
   if (response.status === 413) {
     throw new Error("El PDF supera el tamaño permitido.");
   }
+  if (response.status === 404) {
+    throw new Error("El servidor no expone la ruta de subida. Si acabas de actualizar el código, reinicia el servidor.");
+  }
   if (!response.ok) {
     throw new Error(`No se pudo subir el material (${response.status}).`);
   }
@@ -37,7 +40,7 @@ export const uploadMaterial = async (file: File, title?: string): Promise<PdfMat
 export const deleteMaterial = async (id: string): Promise<void> => {
   const response = await fetch(`${apiClientConfig.apiUrl}/api/materials/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (response.status === 404) {
-    throw new Error("Ese material ya no existe.");
+    throw new Error("El servidor no encuentra ese material ni la ruta de borrado. Si acabas de actualizar el código, reinicia el servidor.");
   }
   if (!response.ok) {
     throw new Error(`No se pudo borrar el material (${response.status}).`);
