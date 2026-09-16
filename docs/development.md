@@ -6,6 +6,7 @@
 - pnpm.
 - Poppler si vas a trabajar con PDFs:
   - macOS: `brew install poppler`
+  - Windows: `winget install oschwartz10612.Poppler` y añade su carpeta `Library\bin` al `PATH`
   - comandos esperados: `pdfinfo`, `pdftoppm`
 - Google Gemini API key si vas a probar AI.
 
@@ -49,10 +50,17 @@ pnpm --filter @proxus/web run dev
 
 ```bash
 pnpm run typecheck
+pnpm run check:architecture
 pnpm --filter @proxus/web run build
 pnpm --filter @proxus/server run typecheck
-pnpm --filter @proxus/server run eval:tutor:artifact-authoring
+pnpm --filter @proxus/server run eval:tutor:tool-calls      # sin API
+pnpm --filter @proxus/server run eval:tutor:grounding       # sin API (+ casos en vivo con GROUNDING_LIVE=1)
+pnpm --filter @proxus/server run eval:tutor:sessions        # sin API
+pnpm --filter @proxus/server run eval:materials             # sin API, necesita Poppler
+pnpm --filter @proxus/server run eval:tutor:artifact-authoring  # con API
 ```
+
+El servidor no recarga solo al cambiar código: reinicia `pnpm run dev` tras tocar `packages/server` o `packages/shared`. La web sí recarga con Vite.
 
 ## CLI del tutor
 
@@ -84,11 +92,12 @@ Esto es intencional: preferimos fallar temprano antes que levantar una app que f
 
 ### El chat falla al llamar al modelo
 
-Comprueba:
+El tutor muestra el motivo en el chat (cuota diaria agotada, límite por minuto, modelo saturado, clave inválida) y el log del servidor lo traza con `agent.event: model.error` o `model.retry`. Comprueba:
 
 - `.env` existe en la raíz,
 - `GOOGLE_GENERATIVE_AI_API_KEY` es válida,
-- `GEMINI_MODEL` apunta a un modelo disponible.
+- `GEMINI_MODEL` apunta a un modelo disponible para tu clave (la lista está en Google AI Studio),
+- tu cuota gratuita del modelo no está agotada; cada modelo tiene su propio límite.
 
 ### La web no refresca artifacts tras crear uno
 

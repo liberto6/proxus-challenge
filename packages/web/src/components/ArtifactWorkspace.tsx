@@ -1,125 +1,160 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import type {
   Artifact,
   ArtifactAttempt,
-  MultipleChoiceQuestion,
   QuestionCorrection,
   QuizQuestion,
   SubmitAttemptInput,
   TestQuestion
 } from "@proxus/shared";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactQuery, submitArtifactAttemptAction } from "../domain/artifacts/atoms.ts";
+import { materialsQuery } from "../domain/materials/atoms.ts";
+import { formatPages, pluralize } from "../lib/format.ts";
+import { Icon, KindIcon, kindLabel } from "./icons.tsx";
 
 type Answers = Record<string, string>;
 
 interface ArtifactWorkspaceProps {
-  readonly artifactId: string | null;
+  readonly artifactId: string;
+  readonly onClose: () => void;
+  /** Sends a question about the open artifact to the tutor chat. */
+  readonly onAskTutor: (text: string) => void;
 }
 
-export function ArtifactWorkspace({ artifactId }: ArtifactWorkspaceProps) {
-  if (artifactId === null) {
-    return <EmptyWorkspace />;
-  }
+export function ArtifactWorkspace({ artifactId, onClose, onAskTutor }: ArtifactWorkspaceProps) {
+  const artifact = useAtomValue(artifactQuery(artifactId));
+  const refresh = useAtomRefresh(artifactQuery(artifactId));
 
-  return <ArtifactDetail artifactId={artifactId} />;
-}
-
-function EmptyWorkspace() {
   return (
-    <main className="h-screen min-w-0 overflow-y-auto border-slate-800 border-r bg-slate-950/60 p-6 max-md:h-auto max-md:border-r-0 max-md:border-b">
-      <div className="grid h-full place-items-center rounded-3xl border border-dashed border-slate-800 bg-slate-900/40 p-8 text-center">
-        <div>
-          <p className="mb-2 font-bold text-sky-400 text-xs uppercase tracking-widest">Practice workspace</p>
-          <h2 className="text-balance font-bold text-3xl text-slate-100">Select a note, quiz, or test from the sidebar.</h2>
-          <p className="mt-3 max-w-xl text-slate-400">Quizzes and tests can be solved directly here. The tutor chat remains available for hints and explanations.</p>
+    <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-lila-soft" aria-label="Panel de práctica">
+      {AsyncResult.matchWithError(artifact, {
+        onInitial: () => (
+          <>
+            <WorkspaceHeader title="Cargando…" onClose={onClose} />
+            <div className="p-5 font-semibold text-ink-muted" aria-busy="true">Cargando el artefacto…</div>
+          </>
+        ),
+        onError: (cause) => <WorkspaceError message={String(cause)} onClose={onClose} onRetry={refresh} />,
+        onDefect: (cause) => <WorkspaceError message={String(cause)} onClose={onClose} onRetry={refresh} />,
+        onSuccess: ({ value }) => (
+          <>
+            <WorkspaceHeader title={value.title} kind={value.kind} onClose={onClose} />
+            {value.kind === "note"
+              ? <NoteViewer key={value.id} artifact={value} />
+              : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} />}
+          </>
+        )
+      })}
+    </section>
+  );
+}
+
+function WorkspaceHeader({ title, kind, onClose }: { readonly title: string; readonly kind?: Artifact["kind"]; readonly onClose: () => void }) {
+  return (
+    <header className="flex h-[60px] items-center gap-2.5 border-ink border-b-2 bg-paper pr-3 pl-4">
+      {kind !== undefined && <KindIcon kind={kind} size={30} />}
+      <h2 className="min-w-0 flex-1 truncate font-display font-semibold text-base" title={title}>{title}</h2>
+      <button className="icon-btn text-ink" type="button" onClick={onClose} aria-label="Cerrar panel de práctica">
+        <Icon name="close" size={16} strokeWidth={2.2} />
+      </button>
+    </header>
+  );
+}
+
+function WorkspaceError({ message, onClose, onRetry }: { readonly message: string; readonly onClose: () => void; readonly onRetry: () => void }) {
+  return (
+    <>
+      <WorkspaceHeader title="No se pudo abrir" onClose={onClose} />
+      <div className="p-5">
+        <div className="flex flex-col gap-2 rounded-md border-2 border-rosa bg-rosa-soft p-3 text-rosa-ink text-sm" role="alert">
+          <span className="font-semibold break-words">{message}</span>
+          <button className="btn btn-secondary btn-sm self-start" type="button" onClick={onRetry}>Reintentar</button>
         </div>
       </div>
-    </main>
+    </>
   );
 }
 
-function ArtifactDetail({ artifactId }: { readonly artifactId: string }) {
-  const artifact = useAtomValue(artifactQuery(artifactId));
-
-  return (
-    <main className="h-screen min-w-0 overflow-y-auto border-slate-800 border-r bg-slate-950/60 p-6 max-md:h-auto max-md:border-r-0 max-md:border-b">
-      {AsyncResult.matchWithError(artifact, {
-        onInitial: () => <p className="text-slate-400">Loading artifact…</p>,
-        onError: (error) => <p className="text-red-200">{String(error)}</p>,
-        onDefect: (defect) => <p className="text-red-200">{String(defect)}</p>,
-        onSuccess: ({ value }) => <ArtifactContent artifact={value} />
-      })}
-    </main>
-  );
-}
-
-function ArtifactContent({ artifact }: { readonly artifact: Artifact }) {
-  switch (artifact.kind) {
-    case "note":
-      return <NoteViewer artifact={artifact} />;
-    case "quiz":
-    case "test":
-      return <ExerciseSolver artifact={artifact} />;
-  }
-}
-
-/** Where the artifact comes from, when the tutor recorded it. */
+/** "Basado en Ciclo del agua · pág. 1-2", resolving the material title from the list. */
 function ArtifactProvenance({ artifact }: { readonly artifact: Artifact }) {
+  const materials = useAtomValue(materialsQuery);
   if (artifact.source === undefined) {
     return null;
   }
-  const pages = artifact.source.pages;
+  const title = AsyncResult.isSuccess(materials)
+    ? materials.value.materials.find((material) => material.id === artifact.source?.materialId)?.title
+    : undefined;
+  const pages = formatPages(artifact.source.pages);
   return (
-    <p className="mb-6 text-slate-400 text-sm">
-      Basado en <span className="text-slate-200">{artifact.source.materialId}</span>
-      {pages.length > 0 && <>, {pages.length === 1 ? "página" : "páginas"} {pages.join(", ")}</>}
-    </p>
+    <span>
+      Basado en {title ?? artifact.source.materialId}{pages !== undefined ? ` · ${pages}` : ""}
+    </span>
   );
 }
 
 function NoteViewer({ artifact }: { readonly artifact: Extract<Artifact, { readonly kind: "note" }> }) {
   return (
-    <article className="mx-auto max-w-4xl rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl shadow-slate-950/30">
-      <p className="mb-2 font-bold text-sky-400 text-xs uppercase tracking-widest">Nota</p>
-      <h2 className="mb-2 font-bold text-3xl text-slate-100">{artifact.title}</h2>
-      <ArtifactProvenance artifact={artifact} />
-      <div className="prose prose-invert max-w-none">
-        <Streamdown>{artifact.markdown}</Streamdown>
+    <div className="min-h-0 overflow-y-auto p-5">
+      <div className="mb-3 flex flex-wrap items-center gap-2 font-bold text-ink-muted text-sm">
+        <span className="badge badge-lila">{kindLabel.note}</span>
+        <ArtifactProvenance artifact={artifact} />
       </div>
-    </article>
+      <article className="card p-5">
+        <h3 className="mb-3 font-display font-semibold text-xl leading-tight">{artifact.title}</h3>
+        <div className="markdown">
+          <Streamdown>{artifact.markdown}</Streamdown>
+        </div>
+      </article>
+    </div>
   );
 }
 
-function ExerciseSolver({ artifact }: { readonly artifact: Extract<Artifact, { readonly kind: "quiz" | "test" }> }) {
+function ExerciseSolver({ artifact, onAskTutor }: {
+  readonly artifact: Extract<Artifact, { readonly kind: "quiz" | "test" }>;
+  readonly onAskTutor: (text: string) => void;
+}) {
   const [answers, setAnswers] = useState<Answers>({});
   const [attempt, setAttempt] = useState<ArtifactAttempt | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitAttempt = useAtomSet(submitArtifactAttemptAction, { mode: "promise" });
+  const scroller = useRef<HTMLDivElement>(null);
+  const questionRefs = useRef(new Map<string, HTMLElement>());
 
   const unansweredQuestions = useMemo(
     () => artifact.questions.filter((question) => (answers[question.id] ?? "").trim().length === 0),
     [answers, artifact.questions]
   );
+  const answered = artifact.questions.length - unansweredQuestions.length;
+  const graded = attempt?.status === "graded" ? attempt : undefined;
+
+  useEffect(() => {
+    // Instant, not smooth: the result card is inserted at the same time and a
+    // smooth scroll would be cancelled by the layout change.
+    if (graded !== undefined) {
+      scroller.current?.scrollTo({ top: 0 });
+    }
+  }, [graded]);
 
   const setAnswer = (questionId: string, value: string) => {
     setAnswers((current) => ({ ...current, [questionId]: value }));
   };
 
   const submit = async () => {
-    if (unansweredQuestions.length > 0 || isSubmitting) {
+    if (isSubmitting) return;
+    const first = unansweredQuestions[0];
+    if (first !== undefined) {
+      questionRefs.current.get(first.id)?.scrollIntoView({ block: "center", behavior: "smooth" });
       return;
     }
 
     setIsSubmitting(true);
     setError(undefined);
-
     try {
-      const payload = buildSubmitInput(artifact, answers);
-      const result = await submitAttempt(payload);
+      const result = await submitAttempt(buildSubmitInput(artifact, answers));
       setAttempt(result);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -128,82 +163,112 @@ function ExerciseSolver({ artifact }: { readonly artifact: Extract<Artifact, { r
     }
   };
 
-  return (
-    <article className="mx-auto max-w-4xl">
-      <header className="mb-5 rounded-3xl border border-slate-800 bg-slate-900 p-6">
-        <p className="mb-2 font-bold text-sky-400 text-xs uppercase tracking-widest">{artifact.kind}</p>
-        <h2 className="mb-2 font-bold text-3xl text-slate-100">{artifact.title}</h2>
-        <ArtifactProvenance artifact={artifact} />
-        <p className="text-slate-400">Responde todas las preguntas, envía y revisa las correcciones.</p>
-      </header>
+  const reset = () => {
+    setAnswers({});
+    setAttempt(null);
+    setError(undefined);
+    scroller.current?.scrollTo({ top: 0 });
+  };
 
-      <div className="grid gap-4">
+  const failedIndexes = graded === undefined
+    ? []
+    : artifact.questions.flatMap((question, index) => {
+        const correction = graded.corrections.find((item) => item.questionId === question.id);
+        return correction !== undefined && !isCorrectionRight(correction) ? [index + 1] : [];
+      });
+
+  return (
+    <div className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
+      <div ref={scroller} className="flex min-h-0 flex-col gap-4 overflow-y-auto p-5">
+        {graded !== undefined && <AttemptSummary attempt={graded} failedIndexes={failedIndexes} onRetry={reset} />}
+
+        <div className="flex flex-wrap items-center gap-2 font-bold text-ink-muted text-sm">
+          <span className="badge badge-lila">{kindLabel[artifact.kind]}</span>
+          <ArtifactProvenance artifact={artifact} />
+          {graded === undefined && <span>· {pluralize(artifact.questions.length, "pregunta", "preguntas")}</span>}
+        </div>
+
         {artifact.questions.map((question, index) => (
           <QuestionCard
             key={question.id}
+            ref={(node) => {
+              if (node === null) questionRefs.current.delete(question.id);
+              else questionRefs.current.set(question.id, node);
+            }}
             index={index}
+            total={artifact.questions.length}
             question={question}
             value={answers[question.id] ?? ""}
-            correction={attempt?.status === "graded" ? attempt.corrections.find((item) => item.questionId === question.id) : undefined}
+            correction={graded?.corrections.find((item) => item.questionId === question.id)}
             disabled={attempt !== null}
             onChange={(value) => setAnswer(question.id, value)}
           />
         ))}
+
+        {error !== undefined && (
+          <p className="rounded-md border-2 border-rosa bg-rosa-soft p-3 font-semibold text-rosa-ink text-sm" role="alert">{error}</p>
+        )}
       </div>
 
-      {error !== undefined && <p className="mt-4 rounded-2xl border border-red-900 bg-red-950/50 p-4 text-red-100">{error}</p>}
-
-      {attempt?.status === "graded" && <AttemptSummary attempt={attempt} />}
-
-      <footer className="sticky bottom-0 mt-6 rounded-3xl border border-slate-800 bg-slate-950/95 p-4 backdrop-blur">
-        {attempt === null
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-ink border-t-2 bg-paper px-5 py-3">
+        {graded === undefined
           ? (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-slate-400 text-sm">
-                  {unansweredQuestions.length === 0
-                    ? "Ready to submit."
-                    : `${unansweredQuestions.length} question${unansweredQuestions.length === 1 ? "" : "s"} unanswered.`}
-                </p>
-                <button
-                  className="rounded-full bg-sky-400 px-5 py-2 font-semibold text-slate-950 hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="button"
-                  disabled={unansweredQuestions.length > 0 || isSubmitting}
-                  onClick={submit}
-                >
-                  {isSubmitting ? "Submitting…" : `Submit ${artifact.kind}`}
+              <>
+                <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+                  <span className="font-bold text-ink-muted text-sm">
+                    {answered === artifact.questions.length
+                      ? "Todo respondido. ¡A corregir!"
+                      : `${answered} de ${artifact.questions.length} respondidas`}
+                  </span>
+                  <div className="progress max-w-[220px]" aria-hidden="true">
+                    <div style={{ width: `${artifact.questions.length === 0 ? 0 : (answered / artifact.questions.length) * 100}%` }} />
+                  </div>
+                </div>
+                <button className="btn btn-primary" type="button" disabled={isSubmitting} onClick={() => void submit()}>
+                  {isSubmitting ? <><Icon name="spinner" size={16} /> Corrigiendo…</> : "Corregir"}
                 </button>
-              </div>
+              </>
             )
           : (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="font-semibold text-emerald-200">Attempt graded.</p>
-                <button
-                  className="rounded-full border border-slate-700 px-5 py-2 text-slate-200 hover:border-sky-400"
-                  type="button"
-                  onClick={() => {
-                    setAnswers({});
-                    setAttempt(null);
-                    setError(undefined);
-                  }}
-                >
-                  Try again
-                </button>
-              </div>
+              <>
+                <span className="font-bold text-ink-muted text-sm">Corregido hace un momento</span>
+                <div className="flex flex-wrap gap-2">
+                  {failedIndexes.length > 0 && (
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      type="button"
+                      onClick={() => onAskTutor(failedIndexes.length === 1
+                        ? `Explícame la pregunta ${failedIndexes[0]} de «${artifact.title}»`
+                        : `Explícame las preguntas ${listIndexes(failedIndexes)} de «${artifact.title}»`)}
+                    >
+                      <Icon name="spark" size={14} /> {failedIndexes.length === 1 ? `Explícame la pregunta ${failedIndexes[0]}` : "Explícame lo que he fallado"}
+                    </button>
+                  )}
+                  <button className="btn btn-secondary btn-sm" type="button" onClick={reset}>Repetir</button>
+                </div>
+              </>
             )}
       </footer>
-    </article>
+    </div>
   );
 }
 
-function QuestionCard({
-  index,
-  question,
-  value,
-  correction,
-  disabled,
-  onChange
-}: {
+const listIndexes = (indexes: ReadonlyArray<number>): string =>
+  indexes.length <= 1 ? String(indexes[0] ?? "") : `${indexes.slice(0, -1).join(", ")} y ${indexes[indexes.length - 1]}`;
+
+const isCorrectionRight = (correction: QuestionCorrection): boolean =>
+  correction.questionType === "short-answer" ? correction.score >= correction.maxScore : correction.correct;
+
+const questionTypeLabel: Record<QuizQuestion["type"] | TestQuestion["type"], string> = {
+  "multiple-choice": "Opción múltiple",
+  "true-false": "Verdadero o falso",
+  "short-answer": "Respuesta corta"
+};
+
+function QuestionCard({ ref, index, total, question, value, correction, disabled, onChange }: {
+  readonly ref: (node: HTMLElement | null) => void;
   readonly index: number;
+  readonly total: number;
   readonly question: QuizQuestion | TestQuestion;
   readonly value: string;
   readonly correction: QuestionCorrection | undefined;
@@ -211,146 +276,167 @@ function QuestionCard({
   readonly onChange: (value: string) => void;
 }) {
   return (
-    <section className="rounded-3xl border border-slate-800 bg-slate-900 p-5">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <p className="mb-2 text-slate-400 text-sm">Question {index + 1} · {question.type}</p>
-          <h3 className="font-semibold text-lg text-slate-100">{question.prompt}</h3>
+    <section ref={ref} className="card flex flex-col gap-3 p-4" aria-label={`Pregunta ${index + 1} de ${total}`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="mb-1 font-extrabold text-lila-ink text-xs uppercase tracking-wider">
+            Pregunta {index + 1} de {total} · {questionTypeLabel[question.type]}
+          </p>
+          <h3 className="font-extrabold text-[15px] leading-snug">{question.prompt}</h3>
         </div>
         {correction !== undefined && <CorrectionBadge correction={correction} />}
       </div>
 
       {question.type === "multiple-choice" && (
-        <MultipleChoiceInput question={question} value={value} disabled={disabled} onChange={onChange} />
+        <ChoiceList
+          name={question.id}
+          options={question.options.map((option) => ({ id: option.id, label: option.text }))}
+          value={value}
+          disabled={disabled}
+          correctId={correction?.questionType === "multiple-choice" ? correction.correctOptionId : undefined}
+          onChange={onChange}
+        />
       )}
       {question.type === "true-false" && (
-        <TrueFalseInput value={value} disabled={disabled} onChange={onChange} />
+        <ChoiceList
+          name={question.id}
+          options={[{ id: "true", label: "Verdadero" }, { id: "false", label: "Falso" }]}
+          value={value}
+          disabled={disabled}
+          correctId={correction?.questionType === "true-false" ? String(correction.correctAnswer) : undefined}
+          onChange={onChange}
+          columns
+        />
       )}
       {question.type === "short-answer" && (
         <textarea
-          className="min-h-32 w-full rounded-2xl border border-slate-700 bg-slate-950 p-3 text-slate-100 outline-none focus:border-sky-400 disabled:opacity-70"
+          className="min-h-28 w-full rounded-sm border-2 border-line bg-paper p-3 font-semibold outline-none focus:border-ink disabled:opacity-70"
           value={value}
           disabled={disabled}
           onChange={(event) => onChange(event.currentTarget.value)}
-          placeholder="Write your answer…"
+          placeholder="Escribe tu respuesta…"
+          aria-label={`Respuesta a la pregunta ${index + 1}`}
         />
       )}
 
-      {correction !== undefined && <CorrectionDetails correction={correction} question={question} />}
+      {correction !== undefined && <CorrectionDetails correction={correction} />}
     </section>
   );
 }
 
-function MultipleChoiceInput({
-  question,
-  value,
-  disabled,
-  onChange
-}: {
-  readonly question: MultipleChoiceQuestion;
+/** Radio-style options. After grading, the chosen and the correct ones are marked in place. */
+function ChoiceList({ name, options, value, disabled, correctId, onChange, columns = false }: {
+  readonly name: string;
+  readonly options: ReadonlyArray<{ id: string; label: string }>;
   readonly value: string;
   readonly disabled: boolean;
+  readonly correctId: string | undefined;
   readonly onChange: (value: string) => void;
+  readonly columns?: boolean;
 }) {
   return (
-    <div className="grid gap-2">
-      {question.options.map((option) => (
-        <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-3 hover:border-sky-500" key={option.id}>
-          <input
-            type="radio"
-            name={question.id}
-            value={option.id}
-            checked={value === option.id}
-            disabled={disabled}
-            onChange={() => onChange(option.id)}
-          />
-          <span>{option.text}</span>
-        </label>
-      ))}
+    <div className={`grid gap-2 ${columns ? "grid-cols-2 max-sm:grid-cols-1" : ""}`} role="radiogroup">
+      {options.map((option) => {
+        const selected = value === option.id;
+        const state = correctId === undefined
+          ? (selected ? "option-selected" : "")
+          : option.id === correctId
+            ? "option-correct"
+            : selected
+              ? "option-wrong"
+              : "";
+        const tail = correctId === undefined
+          ? undefined
+          : selected
+            ? "Tu respuesta"
+            : option.id === correctId
+              ? "Correcta"
+              : undefined;
+        return (
+          <label key={option.id} className={`option ${state} ${disabled ? "option-disabled" : ""}`}>
+            <input
+              className="sr-only"
+              type="radio"
+              name={name}
+              value={option.id}
+              checked={selected}
+              disabled={disabled}
+              onChange={() => onChange(option.id)}
+            />
+            <span className={`radio ${selected ? "radio-on" : ""}`} aria-hidden="true" />
+            <span className="min-w-0 flex-1">{option.label}</span>
+            {tail !== undefined && (
+              <span className={`ml-auto shrink-0 font-extrabold text-xs ${state === "option-wrong" ? "text-rosa-ink" : "text-mint-ink"}`}>{tail}</span>
+            )}
+          </label>
+        );
+      })}
     </div>
   );
 }
 
-function TrueFalseInput({
-  value,
-  disabled,
-  onChange
-}: {
-  readonly value: string;
-  readonly disabled: boolean;
-  readonly onChange: (value: string) => void;
-}) {
-  return (
-    <div className="grid grid-cols-2 gap-2 max-sm:grid-cols-1">
-      {([
-        ["true", "True"],
-        ["false", "False"]
-      ] as const).map(([nextValue, label]) => (
-        <label className="flex cursor-pointer items-center gap-3 rounded-2xl border border-slate-800 bg-slate-950/70 p-3 hover:border-sky-500" key={nextValue}>
-          <input
-            type="radio"
-            name={`true-false-${label}`}
-            value={nextValue}
-            checked={value === nextValue}
-            disabled={disabled}
-            onChange={() => onChange(nextValue)}
-          />
-          <span>{label}</span>
-        </label>
-      ))}
-    </div>
-  );
-}
+const scoreTone = (ratio: number): { text: string; ring: string; title: string } =>
+  ratio >= 1
+    ? { text: "text-mint-ink", ring: "#2fbf8a", title: "¡Perfecto!" }
+    : ratio >= 0.7
+      ? { text: "text-mint-ink", ring: "#2fbf8a", title: "¡Buen intento!" }
+      : ratio >= 0.4
+        ? { text: "text-sun-ink", ring: "#ffc94d", title: "Vas por buen camino" }
+        : { text: "text-rosa-ink", ring: "#f04e6e", title: "Toca repasar" };
 
-function AttemptSummary({ attempt }: { readonly attempt: Extract<ArtifactAttempt, { readonly status: "graded" }> }) {
+function AttemptSummary({ attempt, failedIndexes, onRetry }: {
+  readonly attempt: Extract<ArtifactAttempt, { readonly status: "graded" }>;
+  readonly failedIndexes: ReadonlyArray<number>;
+  readonly onRetry: () => void;
+}) {
+  const ratio = attempt.maxScore === 0 ? 0 : attempt.score / attempt.maxScore;
+  const tone = scoreTone(ratio);
+  const percent = Math.round(ratio * 100);
+  const advice = failedIndexes.length === 0
+    ? "Todo correcto. Si quieres, pídeme un test más difícil."
+    : failedIndexes.length === 1
+      ? `Has fallado la pregunta ${failedIndexes[0]}. Pídeme que te la explique.`
+      : `Has fallado las preguntas ${listIndexes(failedIndexes)}. Pídeme que te las explique.`;
+
   return (
-    <section className="mt-6 rounded-3xl border border-emerald-900 bg-emerald-950/30 p-5">
-      <p className="font-bold text-emerald-200 text-xl">Score: {attempt.score} / {attempt.maxScore}</p>
-      <p className="mt-1 text-emerald-100/80">{attempt.summary}</p>
+    <section className="card relative flex items-center gap-4 overflow-hidden p-4 shadow-hard-lg" role="status" aria-live="polite">
+      {ratio >= 0.7 && (
+        <>
+          <span className="confetti" style={{ width: 8, height: 8, background: "#ff6b4a", top: 10, right: 60, transform: "rotate(20deg)" }} />
+          <span className="confetti" style={{ width: 6, height: 10, background: "#ffc94d", top: 26, right: 34, transform: "rotate(-30deg)" }} />
+          <span className="confetti" style={{ width: 7, height: 7, background: "#8b7cf6", bottom: 14, right: 80, transform: "rotate(45deg)" }} />
+          <span className="confetti" style={{ width: 5, height: 9, background: "#2fbf8a", bottom: 22, right: 18, transform: "rotate(15deg)" }} />
+        </>
+      )}
+      <div className="ring" style={{ background: `conic-gradient(${tone.ring} 0 ${percent}%, #f6eedf ${percent}% 100%)` }} aria-hidden="true">
+        <div><span className={tone.text}>{attempt.score}</span><span className="text-ink-subtle text-[13px]">/{attempt.maxScore}</span></div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="font-display font-semibold text-xl leading-tight">{tone.title}</p>
+        <p className="font-semibold text-ink-muted text-sm">{advice}</p>
+      </div>
+      <button className="btn btn-secondary btn-sm shrink-0" type="button" onClick={onRetry}>Repetir</button>
     </section>
   );
 }
 
 function CorrectionBadge({ correction }: { readonly correction: QuestionCorrection }) {
   if (correction.questionType === "short-answer") {
-    return <span className="rounded-full bg-sky-950 px-3 py-1 font-semibold text-sky-200 text-sm">{correction.score}/{correction.maxScore}</span>;
+    return <span className="badge badge-lila shrink-0">{correction.score}/{correction.maxScore}</span>;
   }
-
   return correction.correct
-    ? <span className="rounded-full bg-emerald-950 px-3 py-1 font-semibold text-emerald-200 text-sm">Correct</span>
-    : <span className="rounded-full bg-red-950 px-3 py-1 font-semibold text-red-200 text-sm">Review</span>;
+    ? <span className="badge badge-success sticker shrink-0"><Icon name="check" size={12} strokeWidth={3} /> Correcta</span>
+    : <span className="badge badge-danger sticker shrink-0">Casi</span>;
 }
 
-function CorrectionDetails({
-  correction,
-  question
-}: {
-  readonly correction: QuestionCorrection;
-  readonly question: QuizQuestion | TestQuestion;
-}) {
+function CorrectionDetails({ correction }: { readonly correction: QuestionCorrection }) {
+  const text = correction.questionType === "short-answer" ? correction.feedback : correction.explanation;
   return (
-    <div className="mt-4 rounded-2xl border border-slate-800 bg-slate-950 p-4 text-sm">
-      {correction.questionType === "multiple-choice" && question.type === "multiple-choice" && (
-        <>
-          <p className="text-slate-300">Correct answer: <strong>{optionText(question, correction.correctOptionId)}</strong></p>
-          <p className="mt-2 text-slate-400">{correction.explanation}</p>
-        </>
-      )}
-      {correction.questionType === "true-false" && (
-        <>
-          <p className="text-slate-300">Correct answer: <strong>{correction.correctAnswer ? "True" : "False"}</strong></p>
-          <p className="mt-2 text-slate-400">{correction.explanation}</p>
-        </>
-      )}
-      {correction.questionType === "short-answer" && (
-        <p className="text-slate-300">{correction.feedback}</p>
-      )}
-    </div>
+    <p className="border-line border-t-2 border-dashed pt-2.5 font-semibold text-ink-muted text-sm">
+      <strong className="text-ink">{correction.questionType === "short-answer" ? "Comentario: " : "Por qué: "}</strong>{text}
+    </p>
   );
 }
-
-const optionText = (question: MultipleChoiceQuestion, optionId: string) =>
-  question.options.find((option) => option.id === optionId)?.text ?? optionId;
 
 function buildSubmitInput(
   artifact: Extract<Artifact, { readonly kind: "quiz" | "test" }>,

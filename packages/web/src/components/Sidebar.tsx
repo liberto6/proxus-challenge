@@ -1,159 +1,312 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
-import { useRef, useState } from "react";
+import type { ArtifactSummary, PdfMaterial } from "@proxus/shared";
+import { useState, type DragEvent } from "react";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactsQuery } from "../domain/artifacts/atoms.ts";
 import { materialsQuery } from "../domain/materials/atoms.ts";
-import { deleteMaterial, uploadMaterial } from "../domain/materials/upload.ts";
+import { deleteMaterial } from "../domain/materials/upload.ts";
+import type { MaterialUploader } from "../domain/materials/use-material-upload.tsx";
+import { formatBytes, formatPages, pluralize, relativeDay } from "../lib/format.ts";
+import { Icon, KindIcon, kindLabel, Mascot } from "./icons.tsx";
 
 interface SidebarProps {
+  readonly uploader: MaterialUploader;
   readonly selectedArtifactId: string | null;
   readonly onSelectArtifact: (artifactId: string) => void;
 }
 
-export function Sidebar({ selectedArtifactId, onSelectArtifact }: SidebarProps) {
-  const materials = useAtomValue(materialsQuery);
-  const artifacts = useAtomValue(artifactsQuery);
-  const refreshMaterials = useAtomRefresh(materialsQuery);
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [uploading, setUploading] = useState<string | undefined>();
-  const [materialError, setMaterialError] = useState<string | undefined>();
-  const [confirmDelete, setConfirmDelete] = useState<string | undefined>();
+export function Sidebar({ uploader, selectedArtifactId, onSelectArtifact }: SidebarProps) {
+  return (
+    <aside className="flex h-full min-h-0 flex-col border-ink border-r-2 bg-paper">
+      <Brand />
+      <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto px-4 pt-3 pb-4">
+        <MaterialsSection uploader={uploader} />
+        <PracticeList selectedArtifactId={selectedArtifactId} onSelectArtifact={onSelectArtifact} />
+      </div>
+    </aside>
+  );
+}
 
-  const onFileChosen = async (file: File | undefined) => {
-    if (file === undefined) return;
-    setMaterialError(undefined);
-    setUploading(file.name);
-    try {
-      await uploadMaterial(file);
-      refreshMaterials();
-    } catch (cause) {
-      setMaterialError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setUploading(undefined);
-      if (fileInput.current !== null) fileInput.current.value = "";
-    }
-  };
+export function Brand({ compact = false }: { readonly compact?: boolean }) {
+  return (
+    <div className={`flex items-center gap-2.5 ${compact ? "" : "px-4 pt-4 pb-3"}`}>
+      <Mascot size={compact ? 30 : 40} />
+      <div>
+        <div className={`font-display font-semibold leading-tight ${compact ? "text-base" : "text-lg"}`}>Proxus Tutor</div>
+        {!compact && <div className="font-semibold text-ink-subtle text-xs">Tu tutor de bolsillo</div>}
+      </div>
+    </div>
+  );
+}
+
+function SectionTitle({ children, color }: { readonly children: string; readonly color: string }) {
+  return (
+    <h2 className="flex items-center gap-2 font-display font-semibold text-[15px]">
+      <span className={`section-mark ${color}`} aria-hidden="true" />
+      {children}
+    </h2>
+  );
+}
+
+// --- Materiales --------------------------------------------------------------------
+
+export function MaterialsSection({ uploader, hideTitle = false }: { readonly uploader: MaterialUploader; readonly hideTitle?: boolean }) {
+  const materials = useAtomValue(materialsQuery);
+  const refreshMaterials = useAtomRefresh(materialsQuery);
+  const [confirmDelete, setConfirmDelete] = useState<string | undefined>();
+  const [deleteError, setDeleteError] = useState<string | undefined>();
+  const [dragging, setDragging] = useState(false);
 
   const onDelete = async (id: string) => {
-    if (confirmDelete !== id) {
-      setConfirmDelete(id);
-      return;
-    }
     setConfirmDelete(undefined);
-    setMaterialError(undefined);
+    setDeleteError(undefined);
     try {
       await deleteMaterial(id);
       refreshMaterials();
     } catch (cause) {
-      setMaterialError(cause instanceof Error ? cause.message : String(cause));
+      setDeleteError(cause instanceof Error ? cause.message : String(cause));
     }
   };
 
+  const dropHandlers = {
+    onDragOver: (event: DragEvent) => {
+      event.preventDefault();
+      setDragging(true);
+    },
+    onDragLeave: () => setDragging(false),
+    onDrop: (event: DragEvent) => {
+      event.preventDefault();
+      setDragging(false);
+      void uploader.start(event.dataTransfer.files[0]);
+    }
+  };
+
+  const error = uploader.error ?? deleteError;
+  const clearError = () => {
+    uploader.clearError();
+    setDeleteError(undefined);
+  };
+
   return (
-    <aside className="h-screen overflow-y-auto border-slate-800 border-r bg-slate-950 p-5 max-md:h-auto max-md:max-h-[45vh] max-md:border-r-0 max-md:border-b">
-      <div className="mb-8 flex items-center gap-3">
-        <div className="grid size-10 place-items-center rounded-2xl bg-gradient-to-br from-sky-400 to-indigo-500 font-extrabold text-white">
-          P
-        </div>
-        <div>
-          <strong className="block text-slate-100">Proxus Tutor</strong>
-          <span className="block text-slate-400 text-sm">Tutor académico</span>
+    <section>
+      <div className={`mb-2.5 flex items-center gap-3 ${hideTitle ? "justify-end" : "justify-between"}`}>
+        {!hideTitle && <SectionTitle color="bg-coral">Materiales</SectionTitle>}
+        <button className="btn btn-secondary btn-sm" type="button" onClick={uploader.openPicker} disabled={uploader.upload !== undefined}>
+          <Icon name="upload" size={16} strokeWidth={2.2} /> Subir PDF
+        </button>
+      </div>
+      {uploader.input}
+
+      <div className="flex flex-col gap-2.5">
+        {uploader.upload !== undefined && <UploadCard upload={uploader.upload} onCancel={uploader.cancel} />}
+
+        {error !== undefined && (
+          <div className="flex items-start gap-2 rounded-md border-2 border-rosa bg-rosa-soft p-3 text-rosa-ink text-sm" role="alert">
+            <Icon name="alert" size={16} className="mt-0.5 shrink-0" />
+            <span className="min-w-0 flex-1 font-semibold">{error}</span>
+            <button className="icon-btn -my-1.5 -mr-1.5 size-7 text-rosa-ink" type="button" onClick={clearError} aria-label="Cerrar aviso">
+              <Icon name="close" size={14} />
+            </button>
+          </div>
+        )}
+
+        {AsyncResult.matchWithError(materials, {
+          onInitial: () => <Skeleton rows={2} />,
+          onError: (cause) => <LoadError message={String(cause)} onRetry={refreshMaterials} />,
+          onDefect: (cause) => <LoadError message={String(cause)} onRetry={refreshMaterials} />,
+          onSuccess: ({ value }) => (
+            <>
+              {value.materials.map((material) => (
+                <MaterialRow
+                  key={material.id}
+                  material={material}
+                  confirming={confirmDelete === material.id}
+                  onAskDelete={() => setConfirmDelete(material.id)}
+                  onCancelDelete={() => setConfirmDelete(undefined)}
+                  onConfirmDelete={() => void onDelete(material.id)}
+                />
+              ))}
+              <button
+                className={`dropzone ${value.materials.length === 0 ? "dropzone-primary" : ""} ${dragging ? "dropzone-active" : ""}`}
+                type="button"
+                onClick={uploader.openPicker}
+                disabled={uploader.upload !== undefined}
+                {...dropHandlers}
+              >
+                <Icon name="upload" size={20} strokeWidth={2.2} className={value.materials.length === 0 ? "text-coral" : ""} />
+                {value.materials.length === 0
+                  ? (
+                      <>
+                        <strong className="font-extrabold text-ink text-sm">Arrastra un PDF aquí</strong>
+                        <span>o pulsa «Subir PDF». Apuntes, temas, diapositivas.</span>
+                      </>
+                    )
+                  : <span>Arrastra otro PDF aquí</span>}
+              </button>
+            </>
+          )
+        })}
+      </div>
+    </section>
+  );
+}
+
+function MaterialRow({ material, confirming, onAskDelete, onCancelDelete, onConfirmDelete }: {
+  readonly material: PdfMaterial;
+  readonly confirming: boolean;
+  readonly onAskDelete: () => void;
+  readonly onCancelDelete: () => void;
+  readonly onConfirmDelete: () => void;
+}) {
+  const uploaded = relativeDay(material.uploadedAt);
+  return (
+    <div className={`card-flat flex items-center gap-2.5 p-3 ${confirming ? "border-rosa bg-rosa-soft" : ""}`}>
+      <KindIcon kind="pdf" />
+      <div className="min-w-0 flex-1">
+        <div className="line-clamp-2 font-extrabold text-sm leading-tight" title={material.title}>{material.title}</div>
+        <div className="mt-0.5 font-semibold text-ink-muted text-sm">
+          {pluralize(material.pageCount, "página", "páginas")}{uploaded !== undefined ? ` · subido ${uploaded}` : ""}
         </div>
       </div>
+      {confirming
+        ? (
+            <div className="flex shrink-0 gap-1.5">
+              <button className="btn btn-danger btn-sm" type="button" onClick={onConfirmDelete}>Borrar</button>
+              <button className="btn btn-ghost btn-sm" type="button" onClick={onCancelDelete}>No</button>
+            </div>
+          )
+        : (
+            <button className="icon-btn shrink-0" type="button" onClick={onAskDelete} aria-label={`Borrar ${material.title}`} title="Borrar material">
+              <Icon name="trash" size={16} />
+            </button>
+          )}
+    </div>
+  );
+}
 
-      <section className="mb-6">
-        <div className="mb-3 flex items-center justify-between gap-4">
-          <h2 className="font-semibold text-slate-300 text-sm uppercase tracking-widest">Materiales</h2>
-          <button
-            className="rounded-full border border-slate-700 px-3 py-1 text-slate-200 text-sm hover:border-sky-400 disabled:cursor-not-allowed disabled:opacity-50"
-            type="button"
-            onClick={() => fileInput.current?.click()}
-            disabled={uploading !== undefined}
-          >
-            {uploading === undefined ? "Subir PDF" : "Subiendo…"}
-          </button>
-          <input
-            ref={fileInput}
-            className="hidden"
-            type="file"
-            accept="application/pdf,.pdf"
-            onChange={(event) => void onFileChosen(event.currentTarget.files?.[0])}
-          />
+function UploadCard({ upload, onCancel }: { readonly upload: { fileName: string; size: number; progress: number }; readonly onCancel: () => void }) {
+  const percent = Math.round(upload.progress * 100);
+  return (
+    <div className="card-flat flex flex-col gap-2.5 p-3" role="status" aria-live="polite">
+      <div className="flex items-center gap-2.5">
+        <KindIcon kind="pdf" className="opacity-60" />
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-extrabold text-sm leading-tight" title={upload.fileName}>{upload.fileName}</div>
+          <div className="mt-0.5 font-semibold text-ink-muted text-sm">Subiendo · {formatBytes(upload.size)} · {percent} %</div>
         </div>
-        {uploading !== undefined && <p className="mb-2 text-slate-400 text-sm">Subiendo {uploading}…</p>}
-        {materialError !== undefined && <p className="mb-2 text-red-200 text-sm" role="alert">{materialError}</p>}
-        {AsyncResult.matchWithError(materials, {
-          onInitial: () => <p className="text-slate-400">Cargando materiales…</p>,
-          onError: (error) => <p className="text-red-200">{String(error)}</p>,
-          onDefect: (defect) => <p className="text-red-200">{String(defect)}</p>,
-          onSuccess: ({ value }) => value.materials.length === 0
-            ? <p className="text-slate-400">Aún no hay PDFs. Sube uno para que el tutor pueda leerlo.</p>
-            : (
-                <details className="rounded-2xl border border-slate-800 bg-slate-900" open>
-                  <summary className="cursor-pointer px-4 py-3 font-medium text-slate-100 marker:text-sky-400">
-                    {value.materials.length} {value.materials.length === 1 ? "material" : "materiales"}
-                  </summary>
-                  <ul className="grid gap-2 border-slate-800 border-t p-3">
-                    {value.materials.map((material) => (
-                      <li className="flex items-start justify-between gap-2 rounded-xl bg-slate-950/70 p-3" key={material.id}>
-                        <div className="min-w-0">
-                          <strong className="block truncate text-slate-100">{material.title}</strong>
-                          <span className="mt-1 block text-slate-400 text-sm">{material.pageCount} {material.pageCount === 1 ? "página" : "páginas"} · {material.id}</span>
-                        </div>
-                        <button
-                          className={`shrink-0 rounded-full border px-2 py-1 text-xs ${confirmDelete === material.id ? "border-red-400 text-red-200" : "border-slate-700 text-slate-400 hover:border-red-400 hover:text-red-200"}`}
-                          type="button"
-                          onClick={() => void onDelete(material.id)}
-                          onBlur={() => setConfirmDelete((current) => current === material.id ? undefined : current)}
-                          title={confirmDelete === material.id ? "Pulsa otra vez para borrar" : "Borrar material"}
-                        >
-                          {confirmDelete === material.id ? "¿Borrar?" : "Borrar"}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
-              )
-        })}
-      </section>
+        <button className="icon-btn shrink-0" type="button" onClick={onCancel} aria-label="Cancelar subida">
+          <Icon name="close" size={16} />
+        </button>
+      </div>
+      <div className="progress" aria-hidden="true"><div style={{ width: `${percent}%` }} /></div>
+    </div>
+  );
+}
 
-      <section className="mb-6">
-        <div className="mb-3 flex items-center justify-between gap-4">
-          <h2 className="font-semibold text-slate-300 text-sm uppercase tracking-widest">Artefactos</h2>
-        </div>
+// --- Práctica ----------------------------------------------------------------------
+
+export function PracticeList({ selectedArtifactId, onSelectArtifact }: {
+  readonly selectedArtifactId: string | null;
+  readonly onSelectArtifact: (artifactId: string) => void;
+}) {
+  const artifacts = useAtomValue(artifactsQuery);
+  const refreshArtifacts = useAtomRefresh(artifactsQuery);
+  const materials = useAtomValue(materialsQuery);
+  const materialTitles = AsyncResult.isSuccess(materials)
+    ? new Map(materials.value.materials.map((material) => [material.id, material.title]))
+    : new Map<string, string>();
+
+  return (
+    <section>
+      <div className="mb-2.5 flex items-center justify-between gap-3">
+        <SectionTitle color="bg-lila">Práctica</SectionTitle>
+      </div>
+      <div className="flex flex-col gap-2.5">
         {AsyncResult.matchWithError(artifacts, {
-          onInitial: () => <p className="text-slate-400">Cargando artefactos…</p>,
-          onError: (error) => <p className="text-red-200">{String(error)}</p>,
-          onDefect: (defect) => <p className="text-red-200">{String(defect)}</p>,
+          onInitial: () => <Skeleton rows={2} />,
+          onError: (cause) => <LoadError message={String(cause)} onRetry={refreshArtifacts} />,
+          onDefect: (cause) => <LoadError message={String(cause)} onRetry={refreshArtifacts} />,
           onSuccess: ({ value }) => value.artifacts.length === 0
-            ? <p className="text-slate-400">Aún no hay notas, quizzes ni tests.</p>
-            : (
-                <details className="rounded-2xl border border-slate-800 bg-slate-900" open>
-                  <summary className="cursor-pointer px-4 py-3 font-medium text-slate-100 marker:text-sky-400">
-                    {value.artifacts.length} {value.artifacts.length === 1 ? "artefacto" : "artefactos"}
-                  </summary>
-                  <ul className="grid gap-2 border-slate-800 border-t p-3">
-                    {value.artifacts.map((artifact) => (
-                      <li key={artifact.id}>
-                        <button
-                          className={`w-full rounded-xl p-3 text-left transition hover:border-sky-500 hover:bg-slate-950 ${
-                            selectedArtifactId === artifact.id
-                              ? "border border-sky-500 bg-sky-950/40"
-                              : "border border-transparent bg-slate-950/70"
-                          }`}
-                          type="button"
-                          onClick={() => onSelectArtifact(artifact.id)}
-                        >
-                          <strong className="block text-slate-100">{artifact.title}</strong>
-                          <span className="mt-1 block text-slate-400 text-sm">{artifact.kind} · {artifact.id}</span>
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                </details>
+            ? (
+                <p className="rounded-md border-2 border-line border-dashed p-3.5 text-center font-semibold text-ink-subtle text-sm">
+                  Las notas, quizzes y tests que cree el tutor aparecerán aquí.
+                </p>
               )
+            : value.artifacts.map((artifact) => (
+                <ArtifactRow
+                  key={artifact.id}
+                  artifact={artifact}
+                  materialTitle={artifact.source === undefined ? undefined : materialTitles.get(artifact.source.materialId)}
+                  selected={selectedArtifactId === artifact.id}
+                  onSelect={() => onSelectArtifact(artifact.id)}
+                />
+              ))
         })}
-      </section>
-    </aside>
+      </div>
+    </section>
+  );
+}
+
+/** "Quiz · Ciclo del agua · pág. 1-2", with whatever parts are known. */
+export const describeArtifactSummary = (artifact: ArtifactSummary, materialTitle: string | undefined): string => {
+  const parts: string[] = [kindLabel[artifact.kind]];
+  if (artifact.source !== undefined) {
+    if (materialTitle !== undefined) parts.push(materialTitle);
+    const pages = formatPages(artifact.source.pages);
+    if (pages !== undefined) parts.push(pages);
+  } else {
+    const created = relativeDay(artifact.createdAt);
+    if (created !== undefined) parts.push(`creado ${created}`);
+  }
+  return parts.join(" · ");
+};
+
+function ArtifactRow({ artifact, materialTitle, selected, onSelect }: {
+  readonly artifact: ArtifactSummary;
+  readonly materialTitle: string | undefined;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <button
+      className={`flex w-full items-center gap-2.5 p-3 text-left transition ${selected ? "card bg-sun-soft" : "card-flat hover:border-ink"}`}
+      type="button"
+      onClick={onSelect}
+      aria-current={selected ? "true" : undefined}
+    >
+      <KindIcon kind={artifact.kind} />
+      <div className="min-w-0 flex-1">
+        <div className="font-extrabold text-sm leading-tight">{artifact.title}</div>
+        <div className="mt-0.5 font-semibold text-ink-muted text-sm">{describeArtifactSummary(artifact, materialTitle)}</div>
+      </div>
+      <Icon name="chevron" size={16} className="shrink-0 text-ink" />
+    </button>
+  );
+}
+
+// --- Estados compartidos --------------------------------------------------------------
+
+function Skeleton({ rows }: { readonly rows: number }) {
+  return (
+    <div className="flex flex-col gap-2.5" aria-busy="true" aria-label="Cargando">
+      {Array.from({ length: rows }, (_, index) => (
+        <div key={index} className="card-flat flex items-center gap-2.5 p-3">
+          <div className="size-[34px] shrink-0 animate-pulse rounded-sm bg-surface-3" />
+          <div className="flex-1">
+            <div className="h-3.5 w-2/3 animate-pulse rounded bg-surface-3" />
+            <div className="mt-2 h-3 w-1/2 animate-pulse rounded bg-surface-3" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LoadError({ message, onRetry }: { readonly message: string; readonly onRetry: () => void }) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border-2 border-rosa bg-rosa-soft p-3 text-rosa-ink text-sm" role="alert">
+      <span className="font-semibold break-words">No se pudo cargar: {message}</span>
+      <button className="btn btn-secondary btn-sm self-start" type="button" onClick={onRetry}>Reintentar</button>
+    </div>
   );
 }

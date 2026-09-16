@@ -13,22 +13,22 @@ flowchart LR
     direction LR
 
     subgraph Transport["Transport"]
-      Http["HTTP API"]
-      Stream["NDJSON Stream"]
+      Http["HTTP API (materials, artifacts, sessions)"]
+      Stream["NDJSON stream: AgentEvent"]
       Handlers["HTTP Handlers"]
     end
 
     subgraph Domain["Domain"]
       Tutor["TutorChatService"]
-      Harness["Agent Harness"]
+      Harness["Agent harness: session, grounding, trace, events"]
       Materials["Materials Domain"]
       Artifacts["Artifacts Domain"]
     end
 
     subgraph Infra["Infrastructure adapters"]
-      GeminiAdapter["Gemini adapter"]
+      GeminiAdapter["Gemini adapter (function calling, retries)"]
       PopplerService["PopplerPdfService"]
-      FileMaterials["FileMaterialRepository"]
+      FileMaterials["FileMaterialRepository (upload, delete)"]
       FileArtifacts["FileArtifactRepository"]
       FileSessions["FileSessionRepository"]
     end
@@ -40,7 +40,7 @@ flowchart LR
   end
 
   subgraph Storage["Local .data"]
-    PDFs["materials/pdfs/*.pdf"]
+    PDFs["materials/pdfs/*.pdf + *.meta.json"]
     ArtifactJson["artifacts/*.json"]
     Attempts["attempts/*.json"]
     Sessions["agent-sessions/*.json"]
@@ -48,13 +48,15 @@ flowchart LR
 
   Web --> Atoms
   Atoms -->|"HTTP"| Http
-  Web -->|"NDJSON"| Stream
+  Web -->|"sessionId + input"| Stream
   Http --> Handlers
   Stream --> Tutor
   Handlers --> Tutor
   Handlers --> Materials
   Handlers --> Artifacts
+  Handlers --> FileSessions
   Tutor --> Harness
+  Tutor --> FileSessions
   Harness --> Materials
   Harness --> Artifacts
 
@@ -62,7 +64,6 @@ flowchart LR
   Materials --> FileMaterials
   Materials --> PopplerService
   Artifacts --> FileArtifacts
-  Harness --> FileSessions
 
   GeminiAdapter --> Gemini
   PopplerService --> Poppler
@@ -120,23 +121,29 @@ flowchart TB
   subgraph Transport["Transport layer"]
     HttpServer["transport/http/server.ts"]
     Handlers["transport/http/handlers.ts"]
-    StreamRoute["/api/tutor/chat/stream"]
+    StreamRoute["/api/tutor/chat/stream (AgentEvent NDJSON)"]
   end
 
   subgraph Domain["Domain layer"]
-    TutorService["domain/agents/academic-tutor\nTutorChatService"]
-    Harness["domain/agents/harness\nAgentSession / tools / skills"]
+    TutorService["domain/agents/academic-tutor\nTutorChatService + ui-context"]
+    Harness["domain/agents/harness\nsession / grounding / trace / event / cli / skills"]
     MaterialsDomain["domain/materials\nMaterialRepository / PdfService ports"]
-    ArtifactsDomain["domain/artifacts\nArtifactRepository / grading"]
+    ArtifactsDomain["domain/artifacts\nports + grading (schemas en shared)"]
   end
 
   subgraph Infra["Infrastructure layer"]
-    Gemini["infra/agents/gemini-language-model.ts\nGemini LanguageModel adapter"]
-    FileMaterials["infra/materials\nFileMaterialRepository"]
-    Poppler["infra/materials\nPopplerPdfService"]
-    FileArtifacts["infra/artifacts\nFileArtifactRepository"]
-    FileSessions["infra/agents\nFileSessionRepository"]
+    Gemini["infra/agents\ngemini-language-model.ts"]
+    FileSessions["infra/agents\nfile-session-repository.ts"]
+    FileMaterials["infra/materials\nfile-material-repository.ts"]
+    Poppler["infra/materials\npoppler-pdf-service.ts"]
+    FileArtifacts["infra/artifacts\nfile-artifact-repository.ts"]
     NodePlatform["@effect/platform-node"]
+  end
+
+  subgraph Outside["Fuera de las capas"]
+    Scripts["src/scripts/* (CLI)"]
+    Evals["src/evals/* (evals)"]
+    Check["scripts/check-architecture.mjs"]
   end
 
   subgraph External["External systems"]
@@ -154,6 +161,7 @@ flowchart TB
   Handlers --> ArtifactsDomain
   StreamRoute --> TutorService
   TutorService --> Harness
+  TutorService --> FileSessions
   Harness --> MaterialsDomain
   Harness --> ArtifactsDomain
 
@@ -164,6 +172,10 @@ flowchart TB
   FileArtifacts --> Data
   FileSessions --> Data
   Infra --> NodePlatform
+  Scripts --> Domain
+  Scripts --> Infra
+  Evals --> Domain
+  Evals --> Infra
 ```
 
 ### Transporte
@@ -219,12 +231,12 @@ La composición de dependencias vive principalmente en `transport/http/server.ts
 
 ## Tutor agent
 
-El tutor está implementado como un harness de agente con herramientas públicas:
+El tutor está implementado como un harness de agente con dos herramientas:
 
 - `load_skill`: carga instrucciones especializadas.
-- `cli`: ejecuta comandos permitidos del dominio.
+- `cli`: ejecuta comandos permitidos del dominio (`materials …`, `artifacts …`); no es una shell.
 
-Las skills no se exponen como tools directas; el modelo debe cargarlas mediante `load_skill`.
+Las skills no se exponen como tools directas; el modelo debe cargarlas mediante `load_skill`. Alrededor del bucle hay tres piezas de código (no de prompt): la guardia de anclaje (solo se citan páginas renderizadas), las trazas por turno y el sink de eventos con el que las tools informan de progreso. Detalle en [`ai-agent.md`](./ai-agent.md); motivos en [`decisions.md`](./decisions.md).
 
 ```mermaid
 sequenceDiagram
@@ -232,25 +244,31 @@ sequenceDiagram
   participant Web as React Chat
   participant API as /api/tutor/chat/stream
   participant Tutor as TutorChatService
+  participant Sessions as FileSessionRepository
   participant Harness as AgentSession
   participant Gemini
   participant CLI as Domain CLI tools
   participant Data as .data
 
-  User->>Web: asks for a quiz
-  Web->>API: POST messages
-  API->>Tutor: streamMessage(input)
-  Tutor->>Harness: continue session
-  Harness->>Gemini: prompt + available tools
+  User->>Web: asks for a quiz (quiz open in the panel)
+  Web->>API: POST { sessionId, input, context }
+  API->>Tutor: streamMessage
+  Tutor->>Sessions: getSession(sessionId)
+  Sessions-->>Tutor: stored history
+  Tutor->>Harness: stream(history + input + UI note)
+  Harness->>Gemini: prompt (native tool-call parts) + tools
   Gemini-->>Harness: functionCall(load_skill / cli)
+  Harness-->>API: progress "Leyendo páginas 1-2 de …"
   Harness->>CLI: execute command
   CLI->>Data: read/write materials/artifacts
   Data-->>CLI: result
-  CLI-->>Harness: tool result
-  Harness->>Gemini: continue with tool result
+  CLI-->>Harness: tool result (traced)
+  Harness->>Gemini: functionResponse
   Gemini-->>Harness: final answer
-  Harness-->>API: AgentMessage events
-  API-->>Web: NDJSON message/done
+  Harness->>Harness: grounding check (cited pages were rendered?)
+  Harness-->>API: message events (user, tool-call, tool-result, assistant)
+  Tutor->>Sessions: appendMessages (only if the turn completed)
+  API-->>Web: NDJSON events … done
 ```
 
 Puntos de entrada:
@@ -285,7 +303,9 @@ La UI mantiene estado local para cosas efímeras como input del chat, artifact s
 
 ## Trade-offs actuales
 
-- Persistencia por filesystem: simple y fácil de inspeccionar, no orientada a concurrencia fuerte.
-- Algunas rutas usan Effect HTTP API; el stream del chat usa NDJSON manual.
-- Los schemas de artifacts viven solo en `shared` (`schemas/artifact.ts`, con el registro `ArtifactByKind`); el dominio los importa y añade validación y corrección. Añadir un tipo de artefacto es añadir una entrada al registro y su render en la web.
-- El proyecto prioriza legibilidad para challenge sobre completitud productiva.
+- Persistencia por filesystem (materiales, artefactos, intentos, sesiones): simple y fácil de inspeccionar, sin concurrencia ni multiusuario.
+- La ruta del stream del chat es manual (NDJSON) fuera de Effect HTTP API; el resto de rutas usan Effect HTTP API con contratos en `shared`.
+- Los schemas de artefactos viven solo en `shared` (`schemas/artifact.ts`, con el registro `ArtifactByKind`); el dominio los importa y añade validación y corrección. Añadir un tipo de artefacto es añadir una entrada al registro y su render en la web.
+- El adapter de Gemini es propio (fetch + function calling) en lugar de una librería oficial: pequeño y bajo control, pero hay que mantenerlo (firmas de pensamiento, cuotas).
+- La guardia de anclaje es determinista y solo ve citas explícitas de página; no sustituye a una evaluación semántica.
+- La regla de capas se comprueba con `pnpm run check:architecture`; los scripts CLI y los evals viven fuera de `domain`.

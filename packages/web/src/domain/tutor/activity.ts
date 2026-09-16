@@ -17,10 +17,46 @@ export const describeToolMessage = (message: AgentMessage): string => {
   return "";
 };
 
+/** Student-facing names for the tutor's skills; unknown ones fall back to the slug. */
+const skillLabels: Record<string, string> = {
+  "use-uploaded-materials": "cómo usar tus materiales",
+  "create-study-artifacts": "cómo crear notas, quizzes y tests"
+};
+
+/**
+ * One line for a finished step, in the past tense: prefers what the result
+ * says ("Páginas 1-2 leídas de …", "Creado: …") and otherwise turns the call
+ * description into its completed form ("Consultando tus materiales" →
+ * "Materiales consultados") instead of echoing raw tool output.
+ */
+export const describeCompletedStep = (call: AgentMessage, result: AgentMessage | undefined): string => {
+  if (call.role !== "tool-call") return "";
+  if (result === undefined || result.role !== "tool-result") return describeToolCall(call.name, call.input);
+  if (result.isFailure) return `Falló: ${describeToolCall(call.name, call.input)}`;
+  const fromResult = describeToolResult(result.name, result.result);
+  if (typeof result.result !== "string" || result.name === "load_skill") return fromResult;
+  return completedForm(describeToolCall(call.name, call.input));
+};
+
+const completedForm = (label: string): string => {
+  const view = /^Leyendo páginas (\S+) de (.+)$/.exec(label);
+  if (view !== null) return `Leídas las páginas ${view[1]} de ${view[2]}`;
+  const fixed: Record<string, string> = {
+    "Consultando tus materiales": "Materiales consultados",
+    "Escribiendo una nota": "Nota escrita",
+    "Preparando un test": "Test preparado",
+    "Preparando un quiz": "Quiz preparado",
+    "Corrigiendo tus respuestas": "Respuestas corregidas",
+    "Revisando tus artefactos": "Artefactos revisados"
+  };
+  return fixed[label] ?? label.replace(/^Ejecutando: /, "Ejecutado: ").replace(/^Usando /, "Usado ");
+};
+
 const describeToolCall = (name: string, input: unknown): string => {
   if (name === "load_skill") {
     const skill = typeof input === "object" && input !== null ? (input as { name?: unknown }).name : undefined;
-    return `Preparando: ${typeof skill === "string" ? skill.replaceAll("-", " ") : "instrucciones"}`;
+    const label = typeof skill === "string" ? (skillLabels[skill] ?? skill.replaceAll("-", " ")) : "instrucciones";
+    return `Preparando: ${label}`;
   }
 
   const command = cliCommand(input);

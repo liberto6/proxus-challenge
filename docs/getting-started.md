@@ -50,45 +50,26 @@ which pdftoppm
 
 El server valida `pdfinfo` y `pdftoppm` al arrancar.
 
-## 3. Dónde van los PDFs
+## 3. Sube tus PDFs
 
-Los PDFs locales no se commitean. Van en:
-
-```txt
-packages/server/.data/materials/pdfs/
-```
-
-Crea la carpeta y copia tus PDFs:
-
-```bash
-mkdir -p packages/server/.data/materials/pdfs
-cp /ruta/a/material.pdf packages/server/.data/materials/pdfs/
-```
-
-`.data` está ignorado por git, así que puedes usar materiales locales sin ensuciar la PR.
-
-## 4. Cómo nombrar los PDFs
-
-El `materialId` que usa el tutor sale del nombre del archivo sin `.pdf`.
-
-Ejemplo:
+La forma normal es desde la interfaz: botón «Subir PDF» (o arrastrar el fichero) en la barra lateral. El servidor comprueba que es un PDF legible por Poppler y lo guarda en:
 
 ```txt
-packages/server/.data/materials/pdfs/algebra-basica.pdf
+packages/server/.data/materials/pdfs/<id>.pdf        # el PDF
+packages/server/.data/materials/pdfs/<id>.meta.json  # título y fecha
 ```
 
-Aparecerá como:
+El `id` se deriva del título (por ejemplo `ciclo-del-agua-a1b2c3`). Para probar hay un PDF sintético en `packages/server/fixtures/materials/ciclo-del-agua.pdf`.
+
+## 4. Alternativa: copiar PDFs a mano
+
+También puedes copiar ficheros directamente a `packages/server/.data/materials/pdfs/`. En ese caso el `materialId` y el título salen del nombre del fichero sin `.pdf`:
 
 ```txt
-materialId: algebra-basica
+packages/server/.data/materials/pdfs/algebra-basica.pdf   ->   materialId: algebra-basica
 ```
 
-Recomendaciones:
-
-- Usa nombres cortos y estables: `estadistica-tema-1.pdf`, `algebra-basica.pdf`.
-- Evita espacios, acentos y símbolos raros si vas a pedir IDs a mano.
-- Usa PDFs públicos, sintéticos o propios.
-- No metas apuntes privados, exámenes no autorizados, datos de estudiantes ni documentación propietaria.
+Usa nombres cortos y estables, sin espacios ni acentos si vas a escribir ids a mano. Usa PDFs públicos, sintéticos o propios; no metas apuntes privados, exámenes no autorizados ni datos de estudiantes.
 
 ## 5. Comprueba que el tutor ve los materiales
 

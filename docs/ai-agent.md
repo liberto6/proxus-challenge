@@ -69,6 +69,10 @@ artifacts grade <attemptId>
    - `{ type: "done" }`
 6. Si hubo tool results, la web invalida materiales/artifacts.
 
+## Anclaje a las páginas leídas
+
+El tutor solo puede describir o citar páginas que haya renderizado en la conversación. La skill lo exige y el harness lo comprueba (`harness/grounding.ts`): si la respuesta cita páginas no renderizadas, se descarta, se inyecta un recordatorio de sistema y se repite el paso (una vez). Si la respuesta persiste sin que el modelo haya intentado leer ni haya comprobado que no hay materiales, se emite con un aviso visible al alumno. Límite: solo se detectan citas explícitas de página. Evals: `eval:tutor:grounding` (guardia, sin API) y sus 6 casos en vivo (`GROUNDING_LIVE=1`).
+
 ## Contexto de la interfaz
 
 La web envía en cada turno qué artefacto tiene abierto el alumno (`context.openArtifactId`, y opcionalmente `openQuestionId`). El servicio carga el artefacto y añade una nota de sistema solo para ese turno (`academic-tutor/ui-context.ts`), así "explícame la pregunta 2" se entiende sin nombrar el quiz. Al crear un artefacto, el comando devuelve solo una confirmación compacta (id, tipo, título, número de preguntas) y la skill indica responder con un resumen breve sin repetir el contenido: el alumno lo abre desde el panel, donde el chat ofrece un botón "Abrir".
