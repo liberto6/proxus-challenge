@@ -377,7 +377,11 @@ function QuestionCard({ ref, index, total, question, value, correction, disabled
   );
 }
 
-/** Radio-style options. After grading, the chosen and the correct ones are marked in place. */
+/**
+ * Radio-style options. After grading, the chosen and the correct ones are marked in place.
+ * Clicking the selected option again clears the answer: a checked radio does not fire
+ * `change`, so the toggle listens to `click`.
+ */
 function ChoiceList({ name, options, value, disabled, correctId, onChange, columns = false }: {
   readonly name: string;
   readonly options: ReadonlyArray<{ id: string; label: string }>;
@@ -406,7 +410,11 @@ function ChoiceList({ name, options, value, disabled, correctId, onChange, colum
               ? "Correcta"
               : undefined;
         return (
-          <label key={option.id} className={`option ${state} ${disabled ? "option-disabled" : ""}`}>
+          <label
+            key={option.id}
+            className={`option ${state} ${disabled ? "option-disabled" : ""}`}
+            title={selected && !disabled ? "Vuelve a pulsar para desmarcar" : undefined}
+          >
             <input
               className="sr-only"
               type="radio"
@@ -415,6 +423,9 @@ function ChoiceList({ name, options, value, disabled, correctId, onChange, colum
               checked={selected}
               disabled={disabled}
               onChange={() => onChange(option.id)}
+              onClick={() => {
+                if (selected && !disabled) onChange("");
+              }}
             />
             <span className={`radio ${selected ? "radio-on" : ""}`} aria-hidden="true" />
             <span className="min-w-0 flex-1">{option.label}</span>
