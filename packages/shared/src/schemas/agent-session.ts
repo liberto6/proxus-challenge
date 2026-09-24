@@ -16,6 +16,7 @@ export const AgentSessionSummary = Schema.Struct({
   id: Schema.String,
   createdAt: Schema.String,
   updatedAt: Schema.String,
+  /** Messages the student reads (user and assistant), not tool calls or results. */
   messageCount: Schema.Number,
   /** First user message, shortened, to recognise the conversation in a list. */
   preview: Schema.String,

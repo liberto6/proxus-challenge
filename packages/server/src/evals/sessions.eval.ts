@@ -190,7 +190,7 @@ const sessionsCase = Effect.gen(function* () {
     results.push(criterion("unknown-session-rejected", missing._tag === "Failure", `exit: ${missing._tag}`));
 
     const list = yield* sessions.listSessions();
-    results.push(criterion("list-has-summary-with-preview", list.length === 1 && list[0]?.preview === "Lista mis materiales" && list[0]?.messageCount === 6, JSON.stringify(list[0])));
+    results.push(criterion("list-has-summary-with-preview", list.length === 1 && list[0]?.preview === "Lista mis materiales" && list[0]?.messageCount === 4, `visible messages (user + assistant, not tool calls): ${JSON.stringify(list[0])}`));
   });
 
   const dependencies = Layer.mergeAll(FixtureMaterialRepository, UnusedArtifactRepository, InMemorySessionRepository, GeneralOnlyFolderRepository);

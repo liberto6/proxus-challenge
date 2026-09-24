@@ -26,7 +26,7 @@ Una carpeta agrupa materiales, conversaciones y práctica. La pertenencia va en 
 
 ```http
 POST   /api/tutor/sessions        # { folderId? } crea una sesión vacía en esa carpeta (General si falta)
-GET    /api/tutor/sessions        # lista resúmenes (id, fechas, nº mensajes, primer mensaje, carpeta); ?folderId=
+GET    /api/tutor/sessions        # lista resúmenes (id, fechas, nº mensajes visibles del alumno y del tutor, primer mensaje, carpeta); ?folderId=
 GET    /api/tutor/sessions/:id    # sesión con todos sus mensajes
 DELETE /api/tutor/sessions/:id    # borra la conversación
 POST   /api/tutor/chat            # un turno, respuesta completa

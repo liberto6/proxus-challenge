@@ -51,10 +51,14 @@ export interface StoredAgentSessionSummary {
   readonly id: string;
   readonly createdAt: string;
   readonly updatedAt: string;
+  /** Messages the student reads (user and assistant); tool calls and results are not counted. */
   readonly messageCount: number;
   readonly preview: string;
   readonly folderId?: string | undefined;
 }
+
+/** Messages shown as bubbles in the conversation, as opposed to the tool activity between them. */
+export const isVisibleMessage = (message: AgentMessage): boolean => message.role === "user" || message.role === "assistant";
 
 export interface SessionRepository {
   readonly getSession: (
@@ -78,7 +82,7 @@ export const summarizeSession = (session: StoredAgentSession): StoredAgentSessio
     id: session.id,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
-    messageCount: session.messages.length,
+    messageCount: session.messages.filter(isVisibleMessage).length,
     preview,
     ...(session.folderId === undefined ? {} : { folderId: session.folderId })
   };
