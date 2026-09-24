@@ -2,8 +2,8 @@ import { isMain } from "../lib/is-main.ts";
 import { Console, Data, Effect, Layer, Ref } from "effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { LanguageModel, Response } from "effect/unstable/ai";
-import { AgentHarness, AgentSession } from "../domain/agents/harness/index.ts";
-import { citedPages, renderedPages, ungroundedCitations } from "../domain/agents/harness/grounding.ts";
+import { AgentHarness, AgentSession, type AgentSessionRunResult } from "../domain/agents/harness/index.ts";
+import { checkCitations, citedPages, formatPageList, knownMaterials, renderedPages, ungroundedCitations } from "../domain/agents/harness/grounding.ts";
 import { academicTutorSystemPrompt } from "../domain/agents/academic-tutor.ts";
 import { makeMaterialCommands } from "../domain/agents/academic-tutor/material-commands.ts";
 import { AcademicTutorSkills } from "../domain/agents/academic-tutor/skills/index.ts";
@@ -46,18 +46,42 @@ const fixtureMaterial: PdfMaterial = {
   uploadedAt: "2026-01-01T00:00:00.000Z"
 };
 
+// Two more materials for the multi-PDF case: a 60-page set of notes and a 35-page
+// chapter whose printed page numbers would run 61-95.
+const notesMaterial: PdfMaterial = {
+  id: "apuntes-a",
+  title: "Apuntes de arquitectura",
+  fileName: "apuntes-a.pdf",
+  pageCount: 60,
+  uploadedAt: "2026-01-01T00:00:00.000Z"
+};
+
+const chapterMaterial: PdfMaterial = {
+  id: "capitulo-b",
+  title: "Capítulo 3: memoria",
+  fileName: "capitulo-b.pdf",
+  pageCount: 35,
+  uploadedAt: "2026-01-01T00:00:00.000Z"
+};
+
+const scriptedMaterials = [fixtureMaterial, notesMaterial, chapterMaterial];
+
 const ScriptedMaterialRepository = Layer.succeed(MaterialRepository, {
-  list: () => Effect.succeed([fixtureMaterial]),
-  get: (id) => id === fixtureMaterial.id
-    ? Effect.succeed(fixtureMaterial)
-    : Effect.fail(new MaterialNotFound({ materialId: id })),
-  renderPages: (materialId, pages) => materialId === fixtureMaterial.id
-    ? Effect.succeed<MaterialPageImages>({
-        type: "material-page-images",
-        material: fixtureMaterial,
-        pages: pages.map((page) => ({ page, mediaType: "image/png", data: `data:image/png;base64,${onePixelPng}` }))
-      })
-    : Effect.fail(new MaterialNotFound({ materialId })),
+  list: () => Effect.succeed(scriptedMaterials),
+  get: (id) => {
+    const material = scriptedMaterials.find((item) => item.id === id);
+    return material === undefined ? Effect.fail(new MaterialNotFound({ materialId: id })) : Effect.succeed(material);
+  },
+  renderPages: (materialId, pages) => {
+    const material = scriptedMaterials.find((item) => item.id === materialId);
+    return material === undefined
+      ? Effect.fail(new MaterialNotFound({ materialId }))
+      : Effect.succeed<MaterialPageImages>({
+          type: "material-page-images",
+          material,
+          pages: pages.map((page) => ({ page, mediaType: "image/png", data: `data:image/png;base64,${onePixelPng}` }))
+        });
+  },
   save: () => Effect.die("material repository save is not used by this eval"),
   remove: () => Effect.die("material repository remove is not used by this eval")
 });
@@ -95,11 +119,11 @@ const systemTexts = (options: LanguageModel.ProviderOptions | undefined) =>
     .map((message) => typeof message.content === "string" ? message.content : "")
     .join("\n");
 
-const runScripted = (input: string, steps: readonly Step[]) => Effect.gen(function* () {
+const runScripted = (input: string, steps: readonly Step[], messages: AgentSessionRunResult["messages"] = []) => Effect.gen(function* () {
   const received = yield* Ref.make<readonly LanguageModel.ProviderOptions[]>([]);
   const materialRepository = yield* MaterialRepository;
   const harness = makeHarness(materialRepository);
-  const result = yield* AgentSession.make(harness).run({ input, maxSteps: 6 }).pipe(
+  const result = yield* AgentSession.make(harness).run({ input, messages, maxSteps: 6 }).pipe(
     Effect.provide(Layer.mergeAll(harness.layer, scriptedModel(steps, received)))
   );
   const prompts = yield* Ref.get(received);
@@ -145,7 +169,39 @@ const guardCases = Effect.gen(function* () {
   // D. Citation parser.
   const parsed = citedPages("Ver página 2, págs. 4-6 y 9; page 12 and pages 1 to 2. El año 1674 no es página.");
   results.push(
-    criterion("D.citation-parser", JSON.stringify(parsed) === JSON.stringify([2, 4, 5, 6, 9, 12, 1]), `parsed: ${parsed.join(",")}`)
+    criterion("D.citation-parser", JSON.stringify(parsed) === JSON.stringify([2, 4, 5, 6, 9, 12, 1]), `parsed: ${parsed.join(",")}`),
+    criterion("D.bibliographic-pp-is-a-citation", JSON.stringify(citedPages("Véase pp. 61-63.")) === JSON.stringify([61, 62, 63]), "pp. 61-63 -> 61,62,63"),
+    criterion("D.plural-paginas-is-a-citation", JSON.stringify(citedPages("En las páginas 61-63 y la pagina 7.")) === JSON.stringify([61, 62, 63, 7]), `páginas 61-63 -> ${citedPages("En las páginas 61-63 y la pagina 7.").join(",")}`)
+  );
+
+  // E. Two PDFs (60 + 35 pages). The model lists them, reads the chapter, and then
+  // cites "páginas 61-95": printed numbers or pages counted across materials. No
+  // material has 61 pages, so the reminder and the disclaimer must say so, with a
+  // compressed range instead of thirty-five numbers.
+  // Turn 1 reads the chapter; turn 2 answers from memory with the wrong numbering and
+  // does not read anything, which is when the answer gets flagged.
+  const e1 = yield* runScripted("Resume mis materiales en pocas líneas", [
+    call("call_e1", "materials list"),
+    call("call_e2", "materials view capitulo-b 1-35"),
+    text("Tienes dos materiales: unos apuntes de arquitectura y un capítulo sobre memoria.")
+  ]);
+  const e = yield* runScripted("¿Qué páginas hablan de la caché?", [
+    text("El segundo material (páginas 61-95) trata la jerarquía de memoria."),
+    text("El segundo material (páginas 61-95) trata la jerarquía de memoria y la caché.")
+  ], e1.result.messages);
+  const eMaterials = knownMaterials(e.result.messages);
+  const eCheck = checkCitations("páginas 61-95", renderedPages(e.result.messages), eMaterials);
+  const eReminder = systemTexts(e.prompts[1]);
+  results.push(
+    criterion("E.materials-known-with-page-counts", eMaterials.get("apuntes-a")?.pageCount === 60 && eMaterials.get("capitulo-b")?.pageCount === 35, `known: ${[...eMaterials.values()].map((material) => `${material.id}:${material.pageCount}`).join(" ")}`),
+    criterion("E.out-of-range-detected", eCheck.outOfRange.length === 35 && eCheck.outOfRange[0] === 61, `out of range: ${formatPageList(eCheck.outOfRange)}`),
+    criterion("E.reminder-explains-numbering", eReminder.includes("GROUNDING CHECK FAILED") && eReminder.includes("No loaded material has page(s) 61-95") && eReminder.includes("position in the PDF"), "reminder names the range, the page counts and the rule"),
+    criterion("E.disclaimer-compressed-and-explained", e.result.output.includes(disclaimerMarker) && e.result.output.includes("páginas 61-95, pero ningún material") && e.result.output.includes("Capítulo 3: memoria: 35 páginas") && !e.result.output.includes("61, 62, 63"), e.result.output.slice(e.result.output.indexOf(disclaimerMarker)))
+  );
+
+  // F. Page list formatting.
+  results.push(
+    criterion("F.format-page-list", formatPageList([3, 1, 2, 7, 9, 10, 11, 20]) === "1-3, 7, 9-11, 20" && formatPageList([5, 6]) === "5, 6", formatPageList([3, 1, 2, 7, 9, 10, 11, 20]))
   );
 
   return results;

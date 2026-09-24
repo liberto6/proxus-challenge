@@ -5,7 +5,7 @@ import { newTurnId, timed, traceEmptyAnswer, traceGrounding, traceModelCall, tra
 import type { AgentHarness, AgentToolkit } from "./harness.ts";
 import { isMaterialPageImages } from "../../materials/material.ts";
 import { AgentMessage, type AgentMessage as AgentMessageType } from "./message.ts";
-import { RenderedPagesRef, groundingDisclaimer, groundingReminder, renderedPages, ungroundedCitations } from "./grounding.ts";
+import { RenderedPagesRef, checkCitations, groundingDisclaimer, groundingReminder, knownMaterials, renderedPages } from "./grounding.ts";
 
 export interface AgentSessionRunOptions {
   readonly maxSteps?: number;
@@ -167,10 +167,11 @@ function execute(
         let output = response.text;
 
         // Grounding guard: the draft may only cite pages rendered in this conversation.
-        const ungrounded = ungroundedCitations(output, renderedPages(allMessages()));
+        const check = checkCitations(output, renderedPages(allMessages()), knownMaterials(allMessages()));
+        const ungrounded = check.ungrounded;
         if (ungrounded.length > 0 && groundingRetries < 1) {
           groundingRetries += 1;
-          groundingNote = groundingReminder(ungrounded);
+          groundingNote = groundingReminder(check);
           yield* traceGrounding({ outcome: "retry", pages: ungrounded });
           continue;
         }
@@ -185,7 +186,7 @@ function execute(
             message.role === "tool-result" && !message.isFailure && message.result === "No PDF materials found."
           );
           if (!attemptedView && !noMaterials) {
-            output += groundingDisclaimer(ungrounded);
+            output += groundingDisclaimer(check);
             yield* traceGrounding({ outcome: "flagged", pages: ungrounded });
           }
         }

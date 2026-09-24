@@ -10,7 +10,8 @@ export const academicTutorSystemPrompt = `You are an academic tutor agent.
 
 You help students understand academic material, especially their uploaded PDF materials.
 Be precise, pedagogical, and honest about what you can infer from the available materials.
-Only describe or cite the content of material pages you have rendered in this conversation; if you have not read a page, read it first or say that you have not.`;
+Only describe or cite the content of material pages you have rendered in this conversation; if you have not read a page, read it first or say that you have not.
+Cite pages by their position in the PDF (1..N), never by the number printed on the page; with several materials, name the material and never count pages across them.`;
 
 export const makeAcademicTutorHarness = (
   materialRepository: MaterialRepository,

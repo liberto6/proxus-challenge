@@ -123,7 +123,7 @@ pnpm --filter @proxus/server run agent:tutor "Crea un quiz corto de una pregunta
 
 ## Limitaciones conocidas
 
-- La guardia de anclaje solo detecta citas explícitas de página ("página 2", "págs. 1-3"); una afirmación inventada sin número de página no se detecta.
+- La guardia de anclaje solo detecta citas explícitas de página ("página 2", "páginas 61-95", "págs. 1-3", "pp. 4-6"); una afirmación inventada sin número de página no se detecta, y la comprobación es por número de página, no por material.
 - Los esquemas se validan en estructura, contenido mínimo y anclaje (ids, aristas, subetiquetas, causas, tarjetas, páginas leídas), no en la fidelidad de cada texto al PDF; el layout propio no minimiza cruces y se limita a 16 conceptos.
 - La corrección de respuesta corta compara texto normalizado, no significado.
 - Los objetivos de explicación se corrigen por cobertura de ideas (palabras sin acentos, con plurales y los sinónimos que declara el tutor), no por significado: una buena paráfrasis que no use ninguna de las formas declaradas sale como «falta». Un juez con rúbrica queda como siguiente paso; esta corrección sería su respaldo.
