@@ -7,11 +7,13 @@ import type {
   SubmitAttemptInput,
   TestQuestion
 } from "@proxus/shared";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
 import { artifactQuery, submitArtifactAttemptAction } from "../domain/artifacts/atoms.ts";
 import { pluralize } from "../lib/format.ts";
+import { useEscape } from "../lib/use-escape.ts";
+import { useLayoutMode } from "../lib/use-media-query.ts";
 import { DiagramViewer, type PageSource } from "./DiagramViewer.tsx";
 import { ExplainWorkspace } from "./ExplainWorkspace.tsx";
 import { Icon, KindIcon, kindLabel } from "./icons.tsx";
@@ -39,40 +41,88 @@ interface ArtifactWorkspaceProps {
 export function ArtifactWorkspace({ artifactId, onClose, onAskTutor, tutoring }: ArtifactWorkspaceProps) {
   const artifact = useAtomValue(artifactQuery(artifactId));
   const refresh = useAtomRefresh(artifactQuery(artifactId));
+  const layout = useLayoutMode();
+
+  // Full-screen study session. The same elements stay mounted and only change class,
+  // so answers already marked survive entering and leaving the view. On a phone the
+  // panel already fills the screen. Diagrams keep their own full-screen view, with the
+  // drawing and its detail side by side.
+  const [expanded, setExpanded] = useState(false);
+  useEffect(() => setExpanded(false), [artifactId]);
+  const collapse = useCallback(() => setExpanded(false), []);
+  useEscape(expanded, collapse);
+  const askTutor = (text: string, context?: AskTutorContext) => {
+    setExpanded(false);
+    onAskTutor(text, context);
+  };
+  const kind = AsyncResult.isSuccess(artifact) ? artifact.value.kind : undefined;
+  const expandable = layout !== "mobile" && kind !== undefined && kind !== "diagram";
 
   return (
-    <section className="grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-lila-soft" aria-label="Panel de práctica">
-      {AsyncResult.matchWithError(artifact, {
-        onInitial: () => (
-          <>
-            <WorkspaceHeader title="Cargando…" onClose={onClose} />
-            <div className="p-5 font-semibold text-ink-muted" aria-busy="true">Cargando el artefacto…</div>
-          </>
-        ),
-        onError: (cause) => <WorkspaceError message={String(cause)} onClose={onClose} onRetry={refresh} />,
-        onDefect: (cause) => <WorkspaceError message={String(cause)} onClose={onClose} onRetry={refresh} />,
-        onSuccess: ({ value }) => (
-          <>
-            <WorkspaceHeader title={value.title} kind={value.kind} onClose={onClose} />
-            {value.kind === "note"
-              ? <NoteViewer key={value.id} artifact={value} />
-              : value.kind === "diagram"
-                ? <DiagramPanel key={value.id} artifact={value} onAskTutor={onAskTutor} />
-                : value.kind === "explain"
-                  ? <ExplainWorkspace key={value.id} artifact={value} onAskTutor={onAskTutor} tutoring={tutoring} />
-                  : <ExerciseSolver key={value.id} artifact={value} onAskTutor={onAskTutor} tutoring={tutoring} />}
-          </>
-        )
-      })}
+    <section
+      className={expanded ? "workspace-overlay" : "grid h-full min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] bg-lila-soft"}
+      aria-label={expanded ? "Sesión de estudio a pantalla completa" : "Panel de práctica"}
+      {...(expanded ? { role: "dialog", "aria-modal": true } : {})}
+    >
+      <div className={expanded ? "workspace-overlay-inner" : "contents"}>
+        {AsyncResult.matchWithError(artifact, {
+          onInitial: () => (
+            <>
+              <WorkspaceHeader title="Cargando…" onClose={onClose} />
+              <div className="p-5 font-semibold text-ink-muted" aria-busy="true">Cargando el artefacto…</div>
+            </>
+          ),
+          onError: (cause) => <WorkspaceError message={String(cause)} onClose={onClose} onRetry={refresh} />,
+          onDefect: (cause) => <WorkspaceError message={String(cause)} onClose={onClose} onRetry={refresh} />,
+          onSuccess: ({ value }) => (
+            <>
+              <WorkspaceHeader
+                title={value.title}
+                kind={value.kind}
+                onClose={onClose}
+                expanded={expandable ? expanded : undefined}
+                onExpandedChange={expandable ? setExpanded : undefined}
+              />
+              {value.kind === "note"
+                ? <NoteViewer key={value.id} artifact={value} />
+                : value.kind === "diagram"
+                  ? <DiagramPanel key={value.id} artifact={value} onAskTutor={onAskTutor} />
+                  : value.kind === "explain"
+                    ? <ExplainWorkspace key={value.id} artifact={value} onAskTutor={askTutor} tutoring={tutoring} />
+                    : <ExerciseSolver key={value.id} artifact={value} onAskTutor={askTutor} tutoring={tutoring} />}
+            </>
+          )
+        })}
+      </div>
     </section>
   );
 }
 
-function WorkspaceHeader({ title, kind, onClose }: { readonly title: string; readonly kind?: Artifact["kind"]; readonly onClose: () => void }) {
+function WorkspaceHeader({ title, kind, onClose, expanded, onExpandedChange }: {
+  readonly title: string;
+  readonly kind?: Artifact["kind"];
+  readonly onClose: () => void;
+  /** Full-screen state; `undefined` hides the control (loading, phone, diagram). */
+  readonly expanded?: boolean | undefined;
+  readonly onExpandedChange?: ((expanded: boolean) => void) | undefined;
+}) {
   return (
     <header className="flex h-[60px] items-center gap-2.5 border-ink border-b-2 bg-paper pr-3 pl-4">
       {kind !== undefined && <KindIcon kind={kind} size={30} />}
       <h2 className="min-w-0 flex-1 truncate font-display font-semibold text-base" title={title}>{title}</h2>
+      {expanded !== undefined && onExpandedChange !== undefined && (
+        expanded
+          ? (
+              <button className="btn btn-secondary btn-sm" type="button" onClick={() => onExpandedChange(false)} title="Volver al panel (Esc)">
+                <Icon name="collapse" size={14} strokeWidth={2.4} /> Volver
+              </button>
+            )
+          : (
+              <button className="icon-btn text-ink" type="button" onClick={() => onExpandedChange(true)} aria-label="Ver a pantalla completa" title="Ver a pantalla completa">
+                <Icon name="expand" size={16} strokeWidth={2.2} />
+              </button>
+            )
+      )}
       <button className="icon-btn text-ink" type="button" onClick={onClose} aria-label="Cerrar panel de práctica">
         <Icon name="close" size={16} strokeWidth={2.2} />
       </button>

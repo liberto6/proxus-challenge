@@ -296,6 +296,33 @@
     flex: 1 1 auto;
   }
 
+  /* Sesión de estudio a pantalla completa: el panel de práctica centrado en una columna
+     de lectura, sobre el lienzo. Los hijos no cambian de sitio en el árbol: solo la clase. */
+  .workspace-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    display: flex;
+    justify-content: center;
+    background: var(--color-canvas);
+  }
+
+  .workspace-overlay-inner {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    width: min(100%, 960px);
+    min-height: 0;
+    min-width: 0;
+    background: var(--color-lila-soft);
+  }
+
+  @media (min-width: 961px) {
+    .workspace-overlay-inner {
+      border-left: 2px solid var(--color-ink);
+      border-right: 2px solid var(--color-ink);
+    }
+  }
+
   /* Esquema a pantalla completa: dibujo a toda altura y columna lateral con el detalle. */
   .diagram-overlay {
     position: fixed;
