@@ -6,7 +6,7 @@ import {
   Response,
   Tool
 } from "effect/unstable/ai";
-import { emitProgress } from "../../domain/agents/harness/event.ts";
+import { emitProgress, emitTextDelta } from "../../domain/agents/harness/event.ts";
 
 /**
  * Gemini adapter for the Effect AI `LanguageModel` service.
@@ -397,8 +397,72 @@ const parseGeminiError = (errorText: string): { readonly message: string; readon
   }
 };
 
+// `streamGenerateContent` with `alt=sse` answers with server-sent events: one
+// `data: {...}` line per chunk, each a GenerateContentResponse with the new parts.
+// Text arrives in fragments; a function call arrives whole in one chunk.
 const geminiUrl = (model: string, apiKey: string) =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+  `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`;
+
+/** Parts accumulated from a stream of chunks, in the shape `toResponseParts` expects. */
+export interface StreamedResponse {
+  /** Visible text so far (model thoughts are left out). */
+  readonly text: string;
+  /** Function-call parts, whole, in order of arrival (with their thought signatures). */
+  readonly calls: ReadonlyArray<GeminiPart>;
+  readonly finishReason: string | undefined;
+  readonly blockReason: string | undefined;
+}
+
+export const emptyStreamedResponse: StreamedResponse = { text: "", calls: [], finishReason: undefined, blockReason: undefined };
+
+/** Folds one decoded chunk into the accumulated response; `delta` is the visible text it added. */
+export const foldChunk = (state: StreamedResponse, chunk: GeminiResponse): { readonly state: StreamedResponse; readonly delta: string } => {
+  let delta = "";
+  const calls = [...state.calls];
+  for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+    if (part.functionCall !== undefined) {
+      calls.push(part);
+    } else if (part.text !== undefined && part.thought !== true) {
+      delta += part.text;
+    }
+  }
+  return {
+    state: {
+      text: state.text + delta,
+      calls,
+      finishReason: chunk.candidates?.[0]?.finishReason ?? state.finishReason,
+      blockReason: chunk.promptFeedback?.blockReason ?? state.blockReason
+    },
+    delta
+  };
+};
+
+/** The JSON payload of one SSE line, or `undefined` for anything that is not a data line. */
+export const parseSseLine = (line: string): unknown => {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("data:")) {
+    return undefined;
+  }
+  const payload = trimmed.slice("data:".length).trim();
+  if (payload.length === 0 || payload === "[DONE]") {
+    return undefined;
+  }
+  return JSON.parse(payload) as unknown;
+};
+
+/** Everything the adapter needs to finish a step, as if it had come from `generateContent`. */
+export const toGeminiResponse = (state: StreamedResponse): GeminiResponse => ({
+  candidates: [{
+    content: {
+      parts: [
+        ...(state.text.length > 0 ? [{ text: state.text }] : []),
+        ...state.calls
+      ]
+    },
+    ...(state.finishReason === undefined ? {} : { finishReason: state.finishReason })
+  }],
+  ...(state.blockReason === undefined ? {} : { promptFeedback: { blockReason: state.blockReason } })
+});
 
 const decodeGeminiResponse = (json: unknown) =>
   Schema.decodeUnknownSync(GeminiResponse)(json);
@@ -454,32 +518,25 @@ export const GeminiLanguageModelLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* GeminiConfig;
 
-    // One HTTP attempt. Transient provider failures (429 rate limit, 503 overload)
-    // are returned as `{ retryAfterMs }` so the caller can wait visibly.
-    const attemptOnce = (body: string, tools: LanguageModel.ProviderOptions["tools"]) =>
+    const asAiError = (cause: unknown) => cause instanceof AiError.AiError
+      ? cause
+      : toAiError(cause instanceof Error ? cause.message : String(cause));
+
+    // One HTTP attempt, up to the response headers. Transient provider failures
+    // (429 rate limit, 503 overload) are returned as `{ retryAfterMs }` so the
+    // caller can wait visibly; a 200 hands back the open stream.
+    const attemptOnce = (body: string) =>
       Effect.tryPromise({
-        try: async (signal): Promise<{ readonly parts: Array<Response.PartEncoded> } | { readonly retryAfterMs: number; readonly errorText: string }> => {
+        try: async (signal): Promise<{ readonly response: globalThis.Response } | { readonly retryAfterMs: number; readonly errorText: string }> => {
           const response = await fetch(geminiUrl(config.model, config.apiKey), {
             method: "POST",
-            headers: { "content-type": "application/json" },
+            headers: { "content-type": "application/json", "accept": "text/event-stream" },
             body,
             signal
           });
 
           if (response.ok) {
-            const raw: unknown = await response.json();
-            if (process.env.GEMINI_DEBUG === "1") {
-              console.error(`[gemini] raw candidate parts: ${JSON.stringify((raw as { candidates?: unknown }).candidates).slice(0, 3000)}`);
-            }
-            const json = decodeGeminiResponse(raw);
-            const parts = toResponseParts(json.candidates?.[0]?.content?.parts ?? [], tools);
-            if (parts.length === 0) {
-              const reason = emptyResponseReason(json);
-              if (reason !== undefined) {
-                throw toAiError(`Empty response: ${reason}.`);
-              }
-            }
-            return { parts };
+            return { response };
           }
 
           const errorText = await response.text();
@@ -492,19 +549,74 @@ export const GeminiLanguageModelLive = Layer.effect(
           }
           return { retryAfterMs, errorText };
         },
-        catch: (cause) => cause instanceof AiError.AiError
-          ? cause
-          : toAiError(cause instanceof Error ? cause.message : String(cause))
+        catch: asAiError
       });
+
+    // Reads the SSE body chunk by chunk. Visible text goes out as `text-delta`
+    // events while it arrives (the session shows them as the draft answer); at the
+    // end the whole response is turned into parts exactly as before.
+    const readStream = (response: globalThis.Response, tools: LanguageModel.ProviderOptions["tools"]) => Effect.gen(function* () {
+      if (response.body === null) {
+        return yield* toAiError("Empty response: the provider sent no body.");
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let state = emptyStreamedResponse;
+      let chunks = 0;
+
+      const consume = (line: string) => Effect.gen(function* () {
+        const raw = parseSseLine(line);
+        if (raw === undefined) return;
+        chunks += 1;
+        const folded = foldChunk(state, decodeGeminiResponse(raw));
+        state = folded.state;
+        yield* emitTextDelta(folded.delta);
+      });
+
+      const read = Effect.gen(function* () {
+        while (true) {
+          const { value, done } = yield* Effect.tryPromise({ try: () => reader.read(), catch: asAiError });
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            yield* consume(line);
+          }
+        }
+        buffer += decoder.decode();
+        for (const line of buffer.split("\n")) {
+          yield* consume(line);
+        }
+      }).pipe(
+        // Cancelling the turn closes the connection to the provider too.
+        Effect.onInterrupt(() => Effect.promise(() => reader.cancel().catch(() => undefined)))
+      );
+      yield* read;
+
+      if (process.env.GEMINI_DEBUG === "1") {
+        console.error(`[gemini] stream: ${chunks} chunk(s), ${state.text.length} chars, ${state.calls.length} call(s), finish=${state.finishReason ?? "-"}`);
+      }
+      const json = toGeminiResponse(state);
+      const parts = toResponseParts(json.candidates?.[0]?.content?.parts ?? [], tools);
+      if (parts.length === 0) {
+        const reason = emptyResponseReason(json);
+        if (reason !== undefined) {
+          return yield* toAiError(`Empty response: ${reason}.`);
+        }
+      }
+      return parts;
+    });
 
     return yield* LanguageModel.make({
       generateText: (options) => Effect.gen(function* () {
         const body = JSON.stringify(requestBody(options));
 
         for (let attempt = 1; ; attempt++) {
-          const result = yield* attemptOnce(body, options.tools);
-          if ("parts" in result) {
-            return result.parts;
+          const result = yield* attemptOnce(body);
+          if ("response" in result) {
+            return yield* readStream(result.response, options.tools);
           }
 
           if (attempt >= maxAttempts) {

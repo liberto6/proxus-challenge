@@ -124,6 +124,10 @@ Cada turno del agente emite líneas de log estructuradas (logger de Effect, el m
 - `tool.call` / `tool.failed` (`agent.tool`, `agent.input` resumido, `agent.durationMs`).
 - `grounding.retry` / `grounding.flagged` (páginas citadas sin renderizar).
 
+## Streaming de la respuesta
+
+El adaptador de Gemini llama a `streamGenerateContent` (`alt=sse`) y, mientras lee los chunks, emite cada fragmento de texto visible como evento `text-delta` por el mismo canal (`AgentEventSink`) que el progreso de las herramientas; el harness provee ese canal alrededor de cada paso del modelo, así que sin él (CLI, evals) los fragmentos se descartan. Al acabar el chunk final, el adaptador devuelve al harness las mismas partes que devolvía antes (texto unido, llamadas a función con su firma), de modo que el bucle de pasos, la guardia de anclaje y los evals no cambian. El harness emite `text-reset` cuando el texto mostrado no acaba siendo la respuesta: un paso que continúa con tool calls, o un borrador que citaba páginas no leídas. La web acumula los deltas en una burbuja borrador y la sustituye por el `message` del tutor. Los pensamientos del modelo (`thought: true`) no se emiten.
+
 Implementación en `packages/server/src/domain/agents/harness/trace.ts`; el eval `eval:tutor:tool-calls` comprueba que un turno produce estas líneas.
 
 ## Configuración

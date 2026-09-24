@@ -6,6 +6,10 @@ import { AgentMessage } from "./agent-message.ts";
  *
  * - `message`: a persisted conversation message (user, assistant, tool call, tool result).
  * - `progress`: a transient, human-readable status ("Leyendo páginas 1-2 de ...").
+ * - `text-delta`: a fragment of the answer the model is writing right now, to show it as it
+ *   arrives. The final `message` (role assistant) carries the whole text and replaces the draft.
+ * - `text-reset`: the draft shown so far is not the answer (the model went on to call a tool,
+ *   or the harness asked it to answer again); the UI clears it.
  * - `error`: the turn stopped because the model or a tool failed; `retryable` tells the UI
  *   whether resending the same input makes sense.
  * - `done`: end of the turn.
@@ -22,6 +26,17 @@ export const AgentProgressEvent = Schema.Struct({
 });
 export type AgentProgressEvent = typeof AgentProgressEvent.Type;
 
+export const AgentTextDeltaEvent = Schema.Struct({
+  type: Schema.Literal("text-delta"),
+  delta: Schema.String
+});
+export type AgentTextDeltaEvent = typeof AgentTextDeltaEvent.Type;
+
+export const AgentTextResetEvent = Schema.Struct({
+  type: Schema.Literal("text-reset")
+});
+export type AgentTextResetEvent = typeof AgentTextResetEvent.Type;
+
 export const AgentErrorEvent = Schema.Struct({
   type: Schema.Literal("error"),
   message: Schema.String,
@@ -37,6 +52,8 @@ export type AgentDoneEvent = typeof AgentDoneEvent.Type;
 export const AgentEvent = Schema.Union([
   AgentMessageEvent,
   AgentProgressEvent,
+  AgentTextDeltaEvent,
+  AgentTextResetEvent,
   AgentErrorEvent,
   AgentDoneEvent
 ]);

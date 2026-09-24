@@ -8,6 +8,8 @@ import type { AgentMessage } from "./message.ts";
 export type SessionEvent =
   | { readonly type: "message"; readonly message: AgentMessage }
   | { readonly type: "progress"; readonly label: string }
+  | { readonly type: "text-delta"; readonly delta: string }
+  | { readonly type: "text-reset" }
   | { readonly type: "error"; readonly message: string; readonly retryable: boolean };
 
 export interface AgentEventSink {
@@ -24,6 +26,18 @@ export const emitProgress = (label: string): Effect.Effect<void> =>
   Effect.serviceOption(AgentEventSink).pipe(
     Effect.flatMap((sink) => Option.isSome(sink) ? sink.value.emit({ type: "progress", label }) : Effect.void)
   );
+
+/**
+ * A fragment of the answer as the model writes it. The language model adapter
+ * emits these while it reads the provider's stream; the session provides the
+ * sink around each model step, so without a sink (CLI, evals) they are dropped.
+ */
+export const emitTextDelta = (delta: string): Effect.Effect<void> =>
+  delta.length === 0
+    ? Effect.void
+    : Effect.serviceOption(AgentEventSink).pipe(
+        Effect.flatMap((sink) => Option.isSome(sink) ? sink.value.emit({ type: "text-delta", delta }) : Effect.void)
+      );
 
 /** Human-readable label for a tool call, shown to the student while it runs. */
 export const progressLabelFor = (tool: string, input: unknown): string => {

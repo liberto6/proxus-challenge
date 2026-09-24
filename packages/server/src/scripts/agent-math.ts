@@ -130,6 +130,9 @@ export const mathAgent2 = Effect.gen(function* () {
     maxSteps: 5
   }).pipe(
     Stream.tap((event) => Effect.gen(function* () {
+      if (event.type === "text-delta" || event.type === "text-reset") {
+        return;
+      }
       if (event.type !== "message") {
         yield* Console.log(event.type === "progress" ? `… ${event.label}` : `Turn failed: ${event.message}`);
         return;

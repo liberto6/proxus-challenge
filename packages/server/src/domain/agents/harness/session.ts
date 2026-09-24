@@ -141,6 +141,11 @@ function execute(
         textLength: response.text.length
       });
 
+      // Text streamed during a step that goes on to call tools is not the answer.
+      if (response.toolCalls.length > 0 && response.text.trim().length > 0) {
+        yield* emit({ type: "text-reset" });
+      }
+
       for (const toolCall of response.toolCalls) {
         yield* appendMessage(AgentMessage.toolCall(toolCall.id, toolCall.name, toolCall.params, toolCall.metadata));
       }
@@ -173,6 +178,8 @@ function execute(
           groundingRetries += 1;
           groundingNote = groundingReminder(check);
           yield* traceGrounding({ outcome: "retry", pages: ungrounded });
+          // The streamed draft cited unread pages: the student must not keep seeing it.
+          yield* emit({ type: "text-reset" });
           continue;
         }
         if (ungrounded.length > 0) {

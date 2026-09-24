@@ -52,7 +52,7 @@ export const academicTutorAgent = Effect.gen(function* () {
         yield* Console.log(JSON.stringify(event.message, null, 2));
       } else if (event.type === "progress") {
         yield* Console.log(`… ${event.label}`);
-      } else {
+      } else if (event.type === "error") {
         yield* Console.error(`Turn failed${event.retryable ? " (retryable)" : ""}: ${event.message}`);
       }
     })),

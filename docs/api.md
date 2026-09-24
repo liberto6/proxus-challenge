@@ -42,11 +42,13 @@ La conversación se guarda en el servidor (`.data/agent-sessions/<id>.json`). Ca
 ```json
 { "type": "message", "message": { "role": "user | assistant | tool-call | tool-result" } }
 { "type": "progress", "label": "Leyendo páginas 1-2 de ciclo-del-agua" }
+{ "type": "text-delta", "delta": "El ciclo del agua " }
+{ "type": "text-reset" }
 { "type": "error", "message": "...", "retryable": true }
 { "type": "done" }
 ```
 
-`message` son los mensajes persistibles de la conversación; `progress` es transitorio (qué está haciendo el tutor ahora); `error` cierra el turno sin respuesta del tutor y la web ofrece reintentar. Cerrar la conexión cancela el turno.
+`message` son los mensajes persistibles de la conversación; `progress` es transitorio (qué está haciendo el tutor ahora); `text-delta` es un fragmento de la respuesta mientras el modelo la escribe (la web lo muestra como borrador y el `message` final del tutor lo sustituye); `text-reset` descarta el borrador porque ese texto no era la respuesta (el modelo siguió con una herramienta, o el harness le pidió responder de nuevo); `error` cierra el turno sin respuesta del tutor y la web ofrece reintentar. Cerrar la conexión cancela el turno y la petición al proveedor.
 
 La ruta streaming está implementada manualmente para soportar eventos incrementales.
 

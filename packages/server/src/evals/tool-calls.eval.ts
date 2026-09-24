@@ -5,7 +5,7 @@ import { AgentHarness, AgentSession } from "../domain/agents/harness/index.ts";
 import { makeMaterialCommands } from "../domain/agents/academic-tutor/material-commands.ts";
 import { AcademicTutorSkills } from "../domain/agents/academic-tutor/skills/index.ts";
 import { MaterialNotFound, MaterialRepository, type PdfMaterial } from "../domain/materials/material.ts";
-import { classifyFailure, emptyResponseReason, promptContents, requestBody, skipThoughtSignature, toResponseParts } from "../infra/agents/gemini-language-model.ts";
+import { classifyFailure, emptyResponseReason, emptyStreamedResponse, foldChunk, parseSseLine, promptContents, requestBody, skipThoughtSignature, toGeminiResponse, toResponseParts } from "../infra/agents/gemini-language-model.ts";
 import { describeModelFailure, emptyAnswerMessage, maxStepsMessage } from "../domain/agents/harness/session.ts";
 import { describeUiContext } from "../domain/agents/academic-tutor/ui-context.ts";
 import { Artifact, artifactKinds, isArtifactKind, makeArtifact } from "../domain/artifacts/artifact.ts";
@@ -443,6 +443,80 @@ const emptyResponseCase = Effect.sync(() => {
   ];
 });
 
+// --- Case 6: the SSE stream folds into the same parts as a whole response --------
+
+const streamedResponseCase = Effect.sync(() => {
+  const options = { tools: [{ name: "cli" }, { name: "load_skill" }] } as unknown as LanguageModel.ProviderOptions;
+  const lines = [
+    "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"pensando\",\"thought\":true}]}}]}",
+    "",
+    "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hola\"}]}}]}",
+    ": keep-alive",
+    "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" mundo\"}]}}]}",
+    "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"cli\",\"args\":{\"input\":\"materials list\"}},\"thoughtSignature\":\"sig-1\"}]},\"finishReason\":\"STOP\"}]}"
+  ];
+  let state = emptyStreamedResponse;
+  const deltas: string[] = [];
+  for (const line of lines) {
+    const raw = parseSseLine(line);
+    if (raw === undefined) continue;
+    const folded = foldChunk(state, raw as Parameters<typeof foldChunk>[1]);
+    state = folded.state;
+    if (folded.delta.length > 0) deltas.push(folded.delta);
+  }
+  const json = toGeminiResponse(state);
+  const parts = toResponseParts(json.candidates?.[0]?.content?.parts ?? [], options.tools);
+  const textPart = parts.find((part) => part.type === "text");
+  const callPart = parts.find((part) => part.type === "tool-call");
+  const signature = callPart !== undefined && callPart.type === "tool-call"
+    ? ((callPart.metadata as { google?: { thoughtSignature?: string } } | undefined)?.google?.thoughtSignature)
+    : undefined;
+
+  const truncated = toGeminiResponse(foldChunk(emptyStreamedResponse, { candidates: [{ finishReason: "MAX_TOKENS" }] }).state);
+
+  return [
+    criterion("sse-deltas-skip-thoughts-and-comments", JSON.stringify(deltas) === JSON.stringify(["Hola", " mundo"]), `deltas: ${JSON.stringify(deltas)}`),
+    criterion("sse-text-merged-into-one-part", textPart?.type === "text" && textPart.text === "Hola mundo" && parts.filter((part) => part.type === "text").length === 1, `text: ${textPart?.type === "text" ? textPart.text : "-"}`),
+    criterion("sse-function-call-kept-with-signature", callPart !== undefined && signature === "sig-1", `signature: ${signature}`),
+    criterion("sse-finish-reason-survives-folding", emptyResponseReason(truncated)?.includes("MAX_TOKENS") === true, emptyResponseReason(truncated) ?? "-")
+  ];
+});
+
+// --- Case 6b: the session resets the draft when a step is not the answer --------
+
+const draftResetCase = Effect.gen(function* () {
+  const materialRepository = yield* MaterialRepository;
+  const harness = makeHarness(materialRepository);
+  // Step 1: text and a tool call together (the text is not the answer). Step 2: the answer.
+  const calls = yield* Ref.make(0);
+  const model = Layer.effect(
+    LanguageModel.LanguageModel,
+    LanguageModel.make({
+      generateText: () => Ref.getAndUpdate(calls, (n) => n + 1).pipe(Effect.map((index) =>
+        index === 0
+          ? [
+              Response.makePart("text", { text: "Voy a mirar tus materiales." }),
+              Response.makePart("tool-call", { id: "call_1", name: "cli", params: { input: "materials list" }, providerExecuted: false })
+            ]
+          : [Response.makePart("text", { text: "Tienes un material: algebra-basica." })]
+      )),
+      streamText: () => { throw new Error("not used"); }
+    })
+  );
+  const events = yield* AgentSession.make(harness).stream({ input: "Lista mis materiales", maxSteps: 4 }).pipe(
+    Stream.provide(Layer.mergeAll(harness.layer, model)),
+    Stream.runCollect
+  );
+  const types = events.map((event) => event.type === "message" ? `message:${event.message.role}` : event.type);
+  const resetIndex = types.indexOf("text-reset");
+  const callIndex = types.indexOf("message:tool-call");
+
+  return [
+    criterion("draft-reset-before-tool-call-step", resetIndex !== -1 && callIndex !== -1 && resetIndex < callIndex, `events: ${types.join(" > ")}`),
+    criterion("draft-reset-only-once", types.filter((type) => type === "text-reset").length === 1, `resets: ${types.filter((type) => type === "text-reset").length}`)
+  ];
+});
+
 // --- Runner ------------------------------------------------------------------
 
 class ToolCallsEvalFailed extends Data.TaggedError("ToolCallsEvalFailed")<{}> {}
@@ -456,7 +530,9 @@ export const toolCallsEval = Effect.gen(function* () {
     ...(yield* artifactSchemaCase),
     ...(yield* providerFailureCase),
     ...(yield* emptyAnswerCase.pipe(Effect.provide(FixtureMaterialRepository))),
-    ...(yield* emptyResponseCase)
+    ...(yield* emptyResponseCase),
+    ...(yield* streamedResponseCase),
+    ...(yield* draftResetCase.pipe(Effect.provide(FixtureMaterialRepository)))
   ];
 
   const lines = ["academic-tutor.tool-calls"];

@@ -71,6 +71,8 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [progress, setProgress] = useState<readonly string[]>([]);
+  /** The answer as the tutor writes it; replaced by the final assistant message. */
+  const [draft, setDraft] = useState("");
   const [error, setError] = useState<TurnError | undefined>();
   const [focusedNodeId, setFocusedNodeId] = useState<string | undefined>();
   const [focusedQuestionId, setFocusedQuestionId] = useState<string | undefined>();
@@ -94,6 +96,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
     setError(chatSession.error === undefined ? undefined : { message: chatSession.error, input: undefined });
     setInput("");
     setProgress([]);
+    setDraft("");
   }, [chatSession.session?.id, chatSession.error]);
 
   // Keep the latest message and the live progress in view while the student is
@@ -125,7 +128,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
     if (isSending) stickToBottom.current = true;
     const container = scroller.current;
     if (container !== null && stickToBottom.current) container.scrollTop = container.scrollHeight;
-  }, [messages, progress, isSending]);
+  }, [messages, progress, draft, isSending]);
 
   // Text sent from the workspace ("Explícame la pregunta 2").
   useEffect(() => {
@@ -151,6 +154,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
     setIsSending(true);
     setError(undefined);
     setProgress([]);
+    setDraft("");
     pendingInvalidations.current = [];
 
     // Sending clears the composer and shows the message in the thread at once, so the
@@ -188,6 +192,8 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
             setMessages([...historyBefore, ...turnMessages]);
             // A finished step is shown by its activity line; only in-flight labels stay live.
             if (message.role !== "tool-call") setProgress([]);
+            // The persisted answer replaces the streamed draft.
+            if (message.role === "assistant") setDraft("");
 
             if (message.role === "tool-call") {
               pendingInvalidations.current.push(invalidationsForToolCall(message));
@@ -202,6 +208,12 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
           }
           case "progress":
             setProgress((current) => [...current, event.label]);
+            break;
+          case "text-delta":
+            setDraft((current) => current + event.delta);
+            break;
+          case "text-reset":
+            setDraft("");
             break;
           case "error":
             turnFailed = { message: event.message, input: event.retryable ? trimmed : undefined };
@@ -234,6 +246,7 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
     } finally {
       abortController.current = undefined;
       setProgress([]);
+      setDraft("");
       setIsSending(false);
       textarea.current?.focus();
     }
@@ -274,7 +287,8 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
                 {groupMessages(messages).map((group, index) => group.kind === "activity"
                   ? <ActivityGroup key={index} messages={group.messages} onSelectArtifact={onSelectArtifact} mobile={mobile} />
                   : <MessageBubble key={index} message={group.message} mobile={mobile} />)}
-                {isSending && <LiveProgress labels={progress} mobile={mobile} />}
+                {isSending && draft.length > 0 && <DraftBubble text={draft} mobile={mobile} />}
+                {isSending && draft.length === 0 && <LiveProgress labels={progress} mobile={mobile} />}
               </div>
             )}
       </div>
@@ -642,6 +656,20 @@ function ActivityGroup({ messages, onSelectArtifact, mobile }: {
         </div>
       ))}
     </div>
+  );
+}
+
+/** The tutor's answer while it is still arriving. Same look as the final bubble; the markdown renderer tolerates partial text. */
+function DraftBubble({ text, mobile }: { readonly text: string; readonly mobile: boolean }) {
+  return (
+    <article className="flex gap-2.5" aria-live="polite" aria-label="El tutor está escribiendo">
+      <Mascot size={mobile ? 30 : 36} className="mt-0.5 shrink-0" />
+      <div className={`bubble-tutor ${mobile ? "px-3 py-2.5 text-sm" : ""}`}>
+        <div className="markdown">
+          <Streamdown>{text}</Streamdown>
+        </div>
+      </div>
+    </article>
   );
 }
 
