@@ -1,7 +1,7 @@
 import { Cause, Effect, Queue, Stream } from "effect";
 import { AiError, LanguageModel, Prompt, Tool } from "effect/unstable/ai";
 import { AgentEventSink, type SessionEvent } from "./event.ts";
-import { newTurnId, timed, traceGrounding, traceModelCall, traceModelError, traceTurnFinished, traceTurnStarted, withTurn } from "./trace.ts";
+import { newTurnId, timed, traceEmptyAnswer, traceGrounding, traceModelCall, traceModelError, traceTurnFinished, traceTurnStarted, withTurn } from "./trace.ts";
 import type { AgentHarness, AgentToolkit } from "./harness.ts";
 import { isMaterialPageImages } from "../../materials/material.ts";
 import { AgentMessage, type AgentMessage as AgentMessageType } from "./message.ts";
@@ -84,15 +84,28 @@ function execute(
 
     yield* appendMessage(AgentMessage.user(input.input));
 
-    let lastToolResult = "";
     let groundingNote: string | undefined;
     let groundingRetries = 0;
+    let emptyAnswerNote: string | undefined;
+    let emptyAnswerRetries = 0;
     const maxSteps = input.maxSteps ?? 8;
+
+    // The turn ends without an assistant message: the student reads the error and may
+    // resend the same input. Nothing from this turn is persisted by the caller.
+    const failTurn = (message: string, step: number, reason: "error" | "max-steps") => Effect.gen(function* () {
+      yield* emit({ type: "error", message, retryable: true });
+      yield* traceTurnFinished({ steps: step, outputLength: message.length, reason });
+      return {
+        output: message,
+        newMessages,
+        messages: allMessages()
+      };
+    });
 
     yield* traceTurnStarted({ inputLength: input.input.length, historyLength: previousMessages.length, maxSteps });
 
     for (let step = 0; step < maxSteps; step++) {
-      const prompt = renderPrompt(harness.systemPrompt, allMessages(), joinNotes(input.systemNote, groundingNote));
+      const prompt = renderPrompt(harness.systemPrompt, allMessages(), joinNotes(input.systemNote, groundingNote, emptyAnswerNote));
       // Tools run inside generateText; they see the events sink and the pages
       // rendered before this step (results of this step are appended afterwards).
       const [exit, durationMs] = yield* timed(Effect.exit(LanguageModel.generateText({
@@ -137,7 +150,21 @@ function execute(
       }
 
       if (response.toolResults.length === 0) {
-        let output = response.text.length > 0 ? response.text : lastToolResult;
+        // A step with neither text nor tool calls (e.g. the model spent its output on
+        // thoughts, or the provider returned an empty candidate). A tool result is never
+        // an answer for the student, so the model is asked once more to answer in text;
+        // if it stays silent the turn fails and can be retried.
+        if (response.text.trim().length === 0) {
+          if (emptyAnswerRetries < 1) {
+            emptyAnswerRetries += 1;
+            emptyAnswerNote = emptyAnswerReminder;
+            yield* traceEmptyAnswer({ step, outcome: "retry" });
+            continue;
+          }
+          yield* traceEmptyAnswer({ step, outcome: "failed" });
+          return yield* failTurn(emptyAnswerMessage, step + 1, "error");
+        }
+        let output = response.text;
 
         // Grounding guard: the draft may only cite pages rendered in this conversation.
         const ungrounded = ungroundedCitations(output, renderedPages(allMessages()));
@@ -172,22 +199,24 @@ function execute(
         };
       }
 
-      lastToolResult = String(response.toolResults.at(-1)?.result ?? lastToolResult);
     }
 
-    const output = lastToolResult.length > 0
-      ? lastToolResult
-      : "Agent stopped after reaching the maximum number of steps.";
-    yield* appendMessage(AgentMessage.assistant(output));
-    yield* traceTurnFinished({ steps: maxSteps, outputLength: output.length, reason: "max-steps" });
-
-    return {
-      output,
-      newMessages,
-      messages: allMessages()
-    };
+    // The model kept calling tools until the step budget ran out without answering.
+    return yield* failTurn(maxStepsMessage, maxSteps, "max-steps");
   }));
 }
+
+/** Read by the student when a step returns no text twice in a row. */
+export const emptyAnswerMessage =
+  "El tutor no ha generado ninguna respuesta esta vez. Vuelve a enviar el mensaje; si se repite, pide algo más concreto o menos páginas.";
+
+/** Read by the student when the turn runs out of steps while still calling tools. */
+export const maxStepsMessage =
+  "El tutor ha agotado los pasos de este turno sin llegar a responder. Vuelve a intentarlo o divide la petición en partes más pequeñas.";
+
+/** System note for the retry after a step without text or tool calls. */
+const emptyAnswerReminder =
+  "Your previous step returned no text and no tool call. Answer the student now, in text, using only what you have already read in this conversation. Do not call more tools unless strictly necessary.";
 
 const joinNotes = (...notes: ReadonlyArray<string | undefined>): string | undefined => {
   const present = notes.filter((note): note is string => note !== undefined && note.trim().length > 0);

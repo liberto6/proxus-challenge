@@ -70,6 +70,12 @@ export const traceGrounding = (input: { readonly outcome: "retry" | "flagged"; r
     })
   );
 
+export const traceEmptyAnswer = (input: { readonly step: number; readonly outcome: "retry" | "failed" }) =>
+  Effect.logWarning("agent step returned no text and no tool call").pipe(Effect.annotateLogs({
+    "agent.event": `empty-answer.${input.outcome}`,
+    "agent.step": input.step
+  }));
+
 export const traceTurnFinished = (input: { readonly steps: number; readonly outputLength: number; readonly reason: "answer" | "max-steps" | "error" }) =>
   Effect.logInfo("agent turn finished").pipe(Effect.annotateLogs({
     "agent.event": "turn.finished",

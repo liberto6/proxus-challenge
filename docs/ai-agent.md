@@ -118,7 +118,8 @@ La web envía en cada turno qué artefacto tiene abierto el alumno (`context.ope
 
 Cada turno del agente emite líneas de log estructuradas (logger de Effect, el mismo que usa la capa HTTP) con la anotación `agent.turn` compartida por todo el turno y `agent.event` con el tipo de evento:
 
-- `turn.started` / `turn.finished` (pasos, longitud de la respuesta, motivo: `answer` o `max-steps`).
+- `turn.started` / `turn.finished` (pasos, longitud de la respuesta, motivo: `answer`, `max-steps` o `error`).
+- `empty-answer.retry` / `empty-answer.failed` (un paso sin texto ni tool call: se pide una vez más una respuesta en texto; si sigue vacío, el turno termina con un error reintentable y no se fabrica ningún mensaje del tutor).
 - `model.call` (paso, `agent.durationMs`, tools pedidas, longitud del texto) y `model.error` (mensaje del proveedor, por ejemplo un 429).
 - `tool.call` / `tool.failed` (`agent.tool`, `agent.input` resumido, `agent.durationMs`).
 - `grounding.retry` / `grounding.flagged` (páginas citadas sin renderizar).

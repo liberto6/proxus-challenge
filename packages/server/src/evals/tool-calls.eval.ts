@@ -5,8 +5,8 @@ import { AgentHarness, AgentSession } from "../domain/agents/harness/index.ts";
 import { makeMaterialCommands } from "../domain/agents/academic-tutor/material-commands.ts";
 import { AcademicTutorSkills } from "../domain/agents/academic-tutor/skills/index.ts";
 import { MaterialNotFound, MaterialRepository, type PdfMaterial } from "../domain/materials/material.ts";
-import { classifyFailure, promptContents, requestBody, skipThoughtSignature, toResponseParts } from "../infra/agents/gemini-language-model.ts";
-import { describeModelFailure } from "../domain/agents/harness/session.ts";
+import { classifyFailure, emptyResponseReason, promptContents, requestBody, skipThoughtSignature, toResponseParts } from "../infra/agents/gemini-language-model.ts";
+import { describeModelFailure, emptyAnswerMessage, maxStepsMessage } from "../domain/agents/harness/session.ts";
 import { describeUiContext } from "../domain/agents/academic-tutor/ui-context.ts";
 import { Artifact, artifactKinds, isArtifactKind, makeArtifact } from "../domain/artifacts/artifact.ts";
 import { Schema } from "effect";
@@ -351,6 +351,98 @@ const providerFailureCase = Effect.sync(() => {
   ];
 });
 
+// --- Case 5: a step without text or tool calls never becomes an answer ---------
+//
+// Regression guarded: the harness used the last tool result, converted with
+// `String()`, as the answer when the model returned no text. Tool results are
+// objects (rendered pages, created artifacts), so the student read "[object Object]".
+
+const emptyAnswerCase = Effect.gen(function* () {
+  const materialRepository = yield* MaterialRepository;
+  const harness = makeHarness(materialRepository);
+
+  // Script: step 1 lists materials (an object-free tool result), then the model
+  // returns nothing twice. The turn must end with a retryable error event.
+  const silentCalls = yield* Ref.make(0);
+  const silentModel = Layer.effect(
+    LanguageModel.LanguageModel,
+    LanguageModel.make({
+      generateText: () => Ref.getAndUpdate(silentCalls, (n) => n + 1).pipe(Effect.map((index) =>
+        index === 0
+          ? [Response.makePart("tool-call", { id: "call_1", name: "cli", params: { input: "materials list" }, providerExecuted: false })]
+          : []
+      )),
+      streamText: () => { throw new Error("not used"); }
+    })
+  );
+  const silentEvents = yield* AgentSession.make(harness).stream({ input: "Resume mis materiales", maxSteps: 6 }).pipe(
+    Stream.provide(Layer.mergeAll(harness.layer, silentModel)),
+    Stream.runCollect
+  );
+  const silentAssistant = silentEvents.filter((event) => event.type === "message" && event.message.role === "assistant");
+  const silentError = silentEvents.find((event) => event.type === "error");
+  const silentText = JSON.stringify(silentEvents);
+  const silentSteps = yield* Ref.get(silentCalls);
+
+  // Script: the model is silent once, then answers after the reminder.
+  const recoveredCalls = yield* Ref.make<readonly LanguageModel.ProviderOptions[]>([]);
+  const recoveringModel = Layer.effect(
+    LanguageModel.LanguageModel,
+    LanguageModel.make({
+      generateText: (options) => Ref.getAndUpdate(recoveredCalls, (all) => [...all, options]).pipe(Effect.map((seen) =>
+        seen.length === 0 ? [] : [Response.makePart("text", { text: "Tienes un material: algebra-basica." })]
+      )),
+      streamText: () => { throw new Error("not used"); }
+    })
+  );
+  const recovered = yield* AgentSession.make(harness).run({ input: "Resume mis materiales", maxSteps: 4 }).pipe(
+    Effect.provide(Layer.mergeAll(harness.layer, recoveringModel))
+  );
+  const secondPrompt = (yield* Ref.get(recoveredCalls))[1];
+  const reminded = (secondPrompt?.prompt.content ?? []).some((message) =>
+    message.role === "system" && typeof message.content === "string" && message.content.includes("returned no text and no tool call")
+  );
+
+  // Script: the model keeps calling tools until the step budget runs out.
+  const loopingModel = Layer.effect(
+    LanguageModel.LanguageModel,
+    LanguageModel.make({
+      generateText: () => Effect.succeed([Response.makePart("tool-call", { id: "call_loop", name: "cli", params: { input: "materials list" }, providerExecuted: false })]),
+      streamText: () => { throw new Error("not used"); }
+    })
+  );
+  const loopEvents = yield* AgentSession.make(harness).stream({ input: "Resume mis materiales", maxSteps: 2 }).pipe(
+    Stream.provide(Layer.mergeAll(harness.layer, loopingModel)),
+    Stream.runCollect
+  );
+  const loopAssistant = loopEvents.filter((event) => event.type === "message" && event.message.role === "assistant");
+  const loopError = loopEvents.find((event) => event.type === "error");
+
+  return [
+    criterion("empty-answer-never-fabricates-assistant-message", silentAssistant.length === 0 && !silentText.includes("[object Object]"), `assistant messages: ${silentAssistant.length}`),
+    criterion("empty-answer-ends-with-retryable-error", silentError?.type === "error" && silentError.retryable && silentError.message === emptyAnswerMessage, silentError?.type === "error" ? silentError.message : "no error event"),
+    criterion("empty-answer-retries-once-before-failing", silentSteps === 3, `model calls: ${silentSteps} (list + silent + silent)`),
+    criterion("empty-answer-retry-carries-reminder", reminded && recovered.output.includes("algebra-basica"), `output: ${recovered.output}`),
+    criterion("max-steps-ends-with-retryable-error", loopAssistant.length === 0 && loopError?.type === "error" && loopError.retryable && loopError.message === maxStepsMessage, loopError?.type === "error" ? loopError.message : "no error event")
+  ];
+});
+
+// --- Case 5b: the adapter explains why a 200 response is empty -----------------
+
+const emptyResponseCase = Effect.sync(() => {
+  const truncated = emptyResponseReason({ candidates: [{ finishReason: "MAX_TOKENS" }] });
+  const blocked = emptyResponseReason({ promptFeedback: { blockReason: "SAFETY" } });
+  const stopped = emptyResponseReason({ candidates: [{ finishReason: "STOP" }] });
+  const explained = describeModelFailure(classifyFailure(500, "{}", "gemini-3.6-flash"));
+
+  return [
+    criterion("empty-response-max-tokens-explained", truncated !== undefined && truncated.includes("MAX_TOKENS"), truncated ?? "-"),
+    criterion("empty-response-blocked-prompt-explained", blocked !== undefined && blocked.includes("SAFETY"), blocked ?? "-"),
+    criterion("empty-response-stop-left-to-harness", stopped === undefined, `reason: ${stopped}`),
+    criterion("unknown-provider-error-retryable", explained.retryable, explained.message)
+  ];
+});
+
 // --- Runner ------------------------------------------------------------------
 
 class ToolCallsEvalFailed extends Data.TaggedError("ToolCallsEvalFailed")<{}> {}
@@ -362,7 +454,9 @@ export const toolCallsEval = Effect.gen(function* () {
     ...(yield* geminiResponseCase),
     ...(yield* uiContextCase.pipe(Effect.provide(FixtureMaterialRepository))),
     ...(yield* artifactSchemaCase),
-    ...(yield* providerFailureCase)
+    ...(yield* providerFailureCase),
+    ...(yield* emptyAnswerCase.pipe(Effect.provide(FixtureMaterialRepository))),
+    ...(yield* emptyResponseCase)
   ];
 
   const lines = ["academic-tutor.tool-calls"];

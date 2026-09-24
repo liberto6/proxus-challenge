@@ -36,9 +36,42 @@ const GeminiResponse = Schema.Struct({
   candidates: Schema.optional(Schema.Array(Schema.Struct({
     content: Schema.optional(Schema.Struct({
       parts: Schema.optional(Schema.Array(GeminiPart))
-    }))
-  })))
+    })),
+    finishReason: Schema.optional(Schema.String)
+  }))),
+  promptFeedback: Schema.optional(Schema.Struct({
+    blockReason: Schema.optional(Schema.String)
+  }))
 });
+
+type GeminiResponse = typeof GeminiResponse.Type;
+
+/**
+ * Why a successful HTTP response carries nothing the harness can use (no text,
+ * no function call), when the provider says so. `STOP` with empty parts is
+ * left to the harness, which asks the model again.
+ */
+export const emptyResponseReason = (json: GeminiResponse): string | undefined => {
+  const blockReason = json.promptFeedback?.blockReason;
+  if (blockReason !== undefined) {
+    return `the provider blocked the prompt (${blockReason})`;
+  }
+  switch (json.candidates?.[0]?.finishReason) {
+    case "MAX_TOKENS":
+      return "the model ran out of output tokens before answering (MAX_TOKENS), usually because it spent them thinking";
+    case "SAFETY":
+    case "PROHIBITED_CONTENT":
+    case "BLOCKLIST":
+    case "SPII":
+      return `the provider withheld the answer (${json.candidates?.[0]?.finishReason})`;
+    case "RECITATION":
+      return "the provider withheld the answer because it matched copyrighted text (RECITATION)";
+    case "MALFORMED_FUNCTION_CALL":
+      return "the model produced a malformed function call (MALFORMED_FUNCTION_CALL)";
+    default:
+      return undefined;
+  }
+};
 
 type GeminiPart = typeof GeminiPart.Type;
 
@@ -439,7 +472,14 @@ export const GeminiLanguageModelLive = Layer.effect(
               console.error(`[gemini] raw candidate parts: ${JSON.stringify((raw as { candidates?: unknown }).candidates).slice(0, 3000)}`);
             }
             const json = decodeGeminiResponse(raw);
-            return { parts: toResponseParts(json.candidates?.[0]?.content?.parts ?? [], tools) };
+            const parts = toResponseParts(json.candidates?.[0]?.content?.parts ?? [], tools);
+            if (parts.length === 0) {
+              const reason = emptyResponseReason(json);
+              if (reason !== undefined) {
+                throw toAiError(`Empty response: ${reason}.`);
+              }
+            }
+            return { parts };
           }
 
           const errorText = await response.text();
