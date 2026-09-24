@@ -153,10 +153,19 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
     setProgress([]);
     pendingInvalidations.current = [];
 
-    // The user message is shown immediately; the server echoes it as the first event.
+    // Sending clears the composer and shows the message in the thread at once, so the
+    // turn looks sent while the tutor works (30-40 s with page reads). The server echoes
+    // the user message as its first event; that copy replaces the optimistic one. If the
+    // turn fails, the text goes back to the composer.
+    setInput("");
+    setFocusedNodeId(undefined);
+    setFocusedQuestionId(undefined);
     const historyBefore = history;
-    let turnMessages: AgentMessage[] = [];
+    let turnMessages: AgentMessage[] = [{ role: "user", content: trimmed }];
+    let echoed = false;
     let turnFailed: TurnError | undefined;
+    setMessages([...historyBefore, ...turnMessages]);
+    const restoreInput = () => setInput((current) => (current.trim().length === 0 ? trimmed : current));
 
     try {
       const context = selectedArtifactId === null
@@ -170,7 +179,12 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
         switch (event.type) {
           case "message": {
             const message = event.message;
-            turnMessages = [...turnMessages, message];
+            if (message.role === "user" && !echoed) {
+              echoed = true;
+              turnMessages = [message, ...turnMessages.slice(1)];
+            } else {
+              turnMessages = [...turnMessages, message];
+            }
             setMessages([...historyBefore, ...turnMessages]);
             // A finished step is shown by its activity line; only in-flight labels stay live.
             if (message.role !== "tool-call") setProgress([]);
@@ -198,18 +212,17 @@ export function Chat({ chatSession, selectedArtifactId, onSelectArtifact, hasMat
       }
 
       if (turnFailed === undefined) {
-        setInput("");
-        setFocusedNodeId(undefined);
-        setFocusedQuestionId(undefined);
         // The conversation list shows the first message and the last activity.
         refreshSessions();
       } else {
         // Drop the failed turn so a retry does not duplicate the user message.
         setMessages(historyBefore);
         setError(turnFailed);
+        if (turnFailed.input !== undefined) restoreInput();
       }
     } catch (cause) {
       setMessages(historyBefore);
+      restoreInput();
       if (controller.signal.aborted) {
         setError({ message: "Has detenido al tutor.", input: trimmed });
       } else {
