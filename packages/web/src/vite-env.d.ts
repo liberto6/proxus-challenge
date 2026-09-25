@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  /** `browser` uses the speech recognition the browser ships; anything else keeps the simulated dictation. */
+  /** `simulated` uses the prototype's sample texts; anything else (the default) uses the speech recognition the browser ships. */
   readonly VITE_EXPLAIN_DICTATION?: string;
 }

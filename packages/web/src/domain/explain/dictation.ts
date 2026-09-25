@@ -21,12 +21,12 @@ export interface Dictation {
 export type DictationSource = "browser" | "simulated";
 
 /**
- * `VITE_EXPLAIN_DICTATION` in the root `.env` chooses the source:
- * `browser` uses the speech recognition the browser ships; anything else (or
- * nothing) keeps the simulation, which is what the prototype demos with.
+ * `VITE_EXPLAIN_DICTATION` in the root `.env` chooses the source: by default
+ * (or with `browser`) the speech recognition the browser ships; `simulated`
+ * keeps the prototype's sample texts, for demos without a microphone.
  */
 export const configuredDictationSource = (): DictationSource =>
-  import.meta.env.VITE_EXPLAIN_DICTATION === "browser" ? "browser" : "simulated";
+  import.meta.env.VITE_EXPLAIN_DICTATION === "simulated" ? "simulated" : "browser";
 
 /** Whether this browser can recognise speech (Chrome, Edge, Safari; not Firefox). */
 export const speechRecognitionSupported = (): boolean =>

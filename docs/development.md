@@ -25,7 +25,7 @@ GEMINI_MODEL=gemini-3.5-flash
 PORT=3000
 WEB_PORT=5173
 PROXUS_API_URL=http://localhost:3000
-VITE_EXPLAIN_DICTATION=simulated   # o `browser`: reconocimiento de voz del navegador para las explicaciones
+VITE_EXPLAIN_DICTATION=browser     # por defecto; `simulated` dicta textos de muestra para demos sin micrófono
 ```
 
 Vite lee las variables `VITE_*` del mismo `.env` de la raíz; cambiarlas exige reiniciar `pnpm run dev`.
